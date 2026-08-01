@@ -1,0 +1,15 @@
+# Backend
+backend/tmp/
+backend/.env
+backend/*.exe
+
+# Env files
+.env
+.env.local
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

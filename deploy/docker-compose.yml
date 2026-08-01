@@ -1,0 +1,70 @@
+name: wadaag-health
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wadaag
+      POSTGRES_PASSWORD: wadaag
+      POSTGRES_DB: wadaag_health
+    # Host port 5433, not 5432 — a native Postgres service may already own
+    # 5432 on the host (Docker Desktop's port forwarding can silently lose
+    # that conflict, routing host connections to the wrong server). Only
+    # tools running on the host (seed script, migrate CLI, psql) need this;
+    # containers talk to each other via the internal "postgres:5432" DNS name.
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wadaag -d wadaag_health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../backend/db/migrations:/migrations
+    command:
+      [
+        "-path", "/migrations",
+        "-database", "postgres://wadaag:wadaag@postgres:5432/wadaag_health?sslmode=disable",
+        "up",
+      ]
+
+  backend:
+    build:
+      context: ../backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://wadaag:wadaag@postgres:5432/wadaag_health?sslmode=disable
+      JWT_SECRET: dev-only-insecure-secret-do-not-use-in-production
+      APP_ENV: development
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../backend:/app
+
+  web:
+    build:
+      context: ../web
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:8080
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../web:/app
+      - web_node_modules:/app/node_modules
+
+volumes:
+  postgres_data:
+  web_node_modules:
