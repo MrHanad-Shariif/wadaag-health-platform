@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEncounters = `-- name: CountEncounters :one
+SELECT count(*) FROM encounters
+`
+
+func (q *Queries) CountEncounters(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEncounters)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPatients = `-- name: CountPatients :one
+SELECT count(*) FROM patients
+`
+
+func (q *Queries) CountPatients(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countPatients)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createClinicalObservation = `-- name: CreateClinicalObservation :one
 INSERT INTO clinical_observations (encounter_id, type, payload, recorded_by)
 VALUES ($1, $2, $3, $4)
@@ -230,6 +252,43 @@ func (q *Queries) ListObservationsByEncounter(ctx context.Context, encounterID p
 			&i.Payload,
 			&i.RecordedBy,
 			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPatients = `-- name: ListPatients :many
+SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at FROM patients ORDER BY created_at DESC
+`
+
+func (q *Queries) ListPatients(ctx context.Context) ([]Patient, error) {
+	rows, err := q.db.Query(ctx, listPatients)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Patient
+	for rows.Next() {
+		var i Patient
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FullName,
+			&i.DateOfBirth,
+			&i.Sex,
+			&i.NationalID,
+			&i.Phone,
+			&i.Address,
+			&i.NextOfKin,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

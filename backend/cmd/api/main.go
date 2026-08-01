@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/wadaag/health-platform/backend/internal/audit"
+	"github.com/wadaag/health-platform/backend/internal/authz"
 	"github.com/wadaag/health-platform/backend/internal/consent"
+	"github.com/wadaag/health-platform/backend/internal/dashboard"
 	"github.com/wadaag/health-platform/backend/internal/facilities"
 	"github.com/wadaag/health-platform/backend/internal/identity"
 	"github.com/wadaag/health-platform/backend/internal/platform"
@@ -53,6 +55,11 @@ func run() error {
 	// depends on facilities (to resolve a provider's facility claim) even
 	// though facilities is "below" it in the module table, via the
 	// FacilityResolver interface rather than a direct import cycle.
+	//
+	// identity <-> authz is a genuine circular dependency at the wiring
+	// level (authz creates accounts via identity; identity resolves
+	// permissions via authz) — broken with SetPermissionResolver after
+	// both are constructed. See identity.Service.SetPermissionResolver.
 	facilitiesRepo := facilities.NewRepository(db)
 	facilitiesService := facilities.NewService(facilitiesRepo)
 	facilitiesHandler := facilities.NewHandler(facilitiesService, tokenManager)
@@ -67,6 +74,11 @@ func run() error {
 	identityService := identity.NewService(identityRepo, tokenManager, facilitiesService)
 	identityHandler := identity.NewHandler(identityService, tokenManager)
 
+	authzRepo := authz.NewRepository(db)
+	authzService := authz.NewService(authzRepo, identityService, facilitiesService)
+	authzHandler := authz.NewHandler(authzService, tokenManager)
+	identityService.SetPermissionResolver(authzService)
+
 	recordsRepo := records.NewRepository(db)
 	recordsService := records.NewService(recordsRepo, consentChecker, facilitiesService)
 	recordsHandler := records.NewHandler(recordsService, consentChecker, auditLogger, tokenManager)
@@ -78,6 +90,9 @@ func run() error {
 	consentHandler := consent.NewHandler(consentChecker, tokenManager, recordsService)
 	auditHandler := audit.NewHandler(auditLogger, tokenManager, recordsService)
 
+	dashboardService := dashboard.NewService(recordsService, recordsService, facilitiesService, authzService, referralsService)
+	dashboardHandler := dashboard.NewHandler(dashboardService, tokenManager)
+
 	router := server.NewRouter(server.Modules{
 		Identity:   identityHandler,
 		Facilities: facilitiesHandler,
@@ -85,6 +100,8 @@ func run() error {
 		Referrals:  referralsHandler,
 		Consent:    consentHandler,
 		Audit:      auditHandler,
+		Authz:      authzHandler,
+		Dashboard:  dashboardHandler,
 	})
 
 	httpServer := &http.Server{

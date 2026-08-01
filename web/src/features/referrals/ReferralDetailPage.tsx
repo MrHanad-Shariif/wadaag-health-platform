@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { PageHeader } from '../../shared/PageHeader'
+import { useToast } from '../../shared/useToast'
 import { useAuth } from '../auth/useAuth'
 import { formatStatus } from './format'
 import {
@@ -17,18 +18,22 @@ import {
 } from './api'
 import type { Referral } from './types'
 
-const ACTIONS_BY_STATUS: Record<string, { label: string; run: typeof acceptReferral; className?: string }[]> = {
+const ACTIONS_BY_STATUS: Record<
+  string,
+  { label: string; run: typeof acceptReferral; className?: string; toast: string }[]
+> = {
   routed: [
-    { label: 'Accept', run: acceptReferral, className: 'button--primary' },
-    { label: 'Decline', run: declineReferral, className: 'button--outline-danger' },
+    { label: 'Accept', run: acceptReferral, className: 'button--primary', toast: 'Referral accepted' },
+    { label: 'Decline', run: declineReferral, className: 'button--outline-danger', toast: 'Referral declined' },
   ],
-  accepted: [{ label: 'Start', run: startReferral, className: 'button--primary' }],
-  in_progress: [{ label: 'Complete', run: completeReferral, className: 'button--primary' }],
+  accepted: [{ label: 'Start', run: startReferral, className: 'button--primary', toast: 'Referral started' }],
+  in_progress: [{ label: 'Complete', run: completeReferral, className: 'button--primary', toast: 'Referral completed' }],
 }
 
 export function ReferralDetailPage() {
   const { referralId } = useParams<{ referralId: string }>()
   const { user } = useAuth()
+  const { show } = useToast()
   const isProvider = user?.role === 'physician' || user?.role === 'hospital_admin'
 
   const referralState = useFetch(() => getReferral(referralId!), [referralId])
@@ -37,7 +42,7 @@ export function ReferralDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
 
-  async function runAction(action: (id: string, version: number) => Promise<Referral>) {
+  async function runAction(action: (id: string, version: number) => Promise<Referral>, toastMessage: string) {
     if (!referralState.data) return
     setActionError(null)
     setRunning(true)
@@ -45,6 +50,7 @@ export function ReferralDetailPage() {
       await action(referralId!, referralState.data.version)
       referralState.reload()
       eventsState.reload()
+      show(toastMessage)
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Action failed.')
     } finally {
@@ -61,15 +67,15 @@ export function ReferralDetailPage() {
 
   return (
     <div className="page">
-      <Link to={`/patients/${referral.patient_id}`} className="back-link">
-        <ArrowLeft size={16} aria-hidden="true" /> Back to patient
-      </Link>
-      <h1>{referral.specialty_requested} referral</h1>
+      <PageHeader
+        breadcrumb={[{ label: 'Patient', to: `/patients/${referral.patient_id}` }, { label: 'Referral' }]}
+        title={`${referral.specialty_requested} referral`}
+        description={referral.reason}
+      />
       <p>
         <span className={`status-pill status-pill--${referral.status}`}>{formatStatus(referral.status)}</span>{' '}
         <span className={`urgency-tag urgency-tag--${referral.urgency}`}>{referral.urgency}</span>
       </p>
-      <p>{referral.reason}</p>
 
       {isProvider && (statusActions.length > 0 || canCancel) && (
         <div className="action-row">
@@ -79,7 +85,7 @@ export function ReferralDetailPage() {
               type="button"
               className={`button ${a.className ?? 'button--primary'}`}
               disabled={running}
-              onClick={() => runAction(a.run)}
+              onClick={() => runAction(a.run, a.toast)}
             >
               {a.label}
             </button>
@@ -89,7 +95,7 @@ export function ReferralDetailPage() {
               type="button"
               className="button button--danger"
               disabled={running}
-              onClick={() => runAction(cancelReferral)}
+              onClick={() => runAction(cancelReferral, 'Referral cancelled')}
             >
               Cancel referral
             </button>

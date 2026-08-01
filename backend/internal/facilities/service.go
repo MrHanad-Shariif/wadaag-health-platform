@@ -32,6 +32,10 @@ func (s *Service) ListFacilities(ctx context.Context) ([]Facility, error) {
 	return s.repo.ListFacilities(ctx)
 }
 
+func (s *Service) CountFacilities(ctx context.Context) (int64, error) {
+	return s.repo.CountFacilities(ctx)
+}
+
 func (s *Service) GetFacility(ctx context.Context, id uuid.UUID) (Facility, error) {
 	return s.repo.FindFacilityByID(ctx, id)
 }

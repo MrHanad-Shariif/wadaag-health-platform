@@ -16,6 +16,10 @@ export function getPatient(patientId: string) {
   return apiClient.get<Patient>(`/api/v1/records/patients/${patientId}`)
 }
 
+export function listPatients() {
+  return apiClient.get<Patient[]>('/api/v1/records/patients')
+}
+
 export function listEncounters(patientId: string) {
   return apiClient.get<Encounter[]>(`/api/v1/records/patients/${patientId}/encounters`)
 }

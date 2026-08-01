@@ -567,6 +567,12 @@ type Patient struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Permission struct {
+	ID       pgtype.UUID `json:"id"`
+	Resource string      `json:"resource"`
+	Action   string      `json:"action"`
+}
+
 type Provider struct {
 	ID            pgtype.UUID        `json:"id"`
 	UserID        pgtype.UUID        `json:"user_id"`
@@ -604,6 +610,20 @@ type ReferralStatusEvent struct {
 	OccurredAt  pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type Role struct {
+	ID          pgtype.UUID        `json:"id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	FullAccess  bool               `json:"full_access"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RolePermission struct {
+	RoleID       pgtype.UUID `json:"role_id"`
+	PermissionID pgtype.UUID `json:"permission_id"`
+}
+
 type User struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        pgtype.Text        `json:"email"`
@@ -613,4 +633,5 @@ type User struct {
 	Status       string             `json:"status"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	RoleID       pgtype.UUID        `json:"role_id"`
 }

@@ -4,6 +4,8 @@ import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { PageHeader } from '../../shared/PageHeader'
+import { useToast } from '../../shared/useToast'
 import { useAuth } from '../auth/useAuth'
 import { createEncounter, getPatient, listEncounters } from './api'
 import type { Encounter, EncounterType } from './types'
@@ -14,6 +16,7 @@ import type { Referral } from '../referrals/types'
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>()
   const { user } = useAuth()
+  const { show } = useToast()
   const isProvider = user?.role === 'physician' || user?.role === 'hospital_admin'
 
   const patientState = useFetch(() => getPatient(patientId!), [patientId])
@@ -33,6 +36,7 @@ export function PatientDetailPage() {
       await createEncounter(patientId!, { type: encounterType, notes: notes || undefined })
       setNotes('')
       encountersState.reload()
+      show('Encounter added')
     } catch (err) {
       setCreateError(err instanceof ApiError ? err.message : 'Could not create encounter.')
     } finally {
@@ -46,8 +50,18 @@ export function PatientDetailPage() {
 
   return (
     <div className="page">
-      <p className="page-eyebrow">Patient</p>
-      <h1>{patient.full_name}</h1>
+      <PageHeader
+        eyebrow="Patient"
+        title={patient.full_name}
+        actions={
+          isProvider ? (
+            <Link className="button-link" to={`/referrals/new?patient=${patient.id}`}>
+              <Send size={16} aria-hidden="true" />
+              Refer this patient
+            </Link>
+          ) : undefined
+        }
+      />
       {(patient.date_of_birth || patient.sex || patient.phone || patient.national_id) && (
         <dl className="detail-grid">
           {patient.date_of_birth && (
@@ -75,13 +89,6 @@ export function PatientDetailPage() {
             </>
           )}
         </dl>
-      )}
-
-      {isProvider && (
-        <Link className="button-link" to={`/referrals/new?patient=${patient.id}`}>
-          <Send size={16} aria-hidden="true" />
-          Refer this patient
-        </Link>
       )}
 
       <section>

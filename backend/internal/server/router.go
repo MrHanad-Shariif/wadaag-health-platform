@@ -7,7 +7,9 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/wadaag/health-platform/backend/internal/audit"
+	"github.com/wadaag/health-platform/backend/internal/authz"
 	"github.com/wadaag/health-platform/backend/internal/consent"
+	"github.com/wadaag/health-platform/backend/internal/dashboard"
 	"github.com/wadaag/health-platform/backend/internal/facilities"
 	"github.com/wadaag/health-platform/backend/internal/identity"
 	"github.com/wadaag/health-platform/backend/internal/platform"
@@ -22,6 +24,8 @@ type Modules struct {
 	Referrals  *referrals.Handler
 	Consent    *consent.Handler
 	Audit      *audit.Handler
+	Authz      *authz.Handler
+	Dashboard  *dashboard.Handler
 }
 
 // NewRouter is the one place middleware ordering is decided. Every
@@ -56,6 +60,8 @@ func NewRouter(modules Modules) http.Handler {
 		api.Mount("/referrals", modules.Referrals.Routes())
 		api.Mount("/consent", modules.Consent.Routes())
 		api.Mount("/audit", modules.Audit.Routes())
+		api.Mount("/authz", modules.Authz.Routes())
+		api.Mount("/dashboard", modules.Dashboard.Routes())
 	})
 
 	return r

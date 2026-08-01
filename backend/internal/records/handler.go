@@ -33,6 +33,14 @@ func (h *Handler) Routes() chi.Router {
 		create.Post("/patients", h.createPatient)
 	})
 
+	r.Group(func(list chi.Router) {
+		// System-wide patient visibility bypasses per-patient consent
+		// grants, so it's restricted to system_admin rather than the
+		// physician/hospital_admin roles that can view individual records.
+		list.Use(platform.RequireRoles(platform.RoleSystemAdmin))
+		list.Get("/patients", h.listPatients)
+	})
+
 	r.Group(func(patient chi.Router) {
 		patient.Use(consent.Middleware(h.consent, h.audit, audit.ActionViewPatient, h.resolvePatientRoute))
 		patient.Get("/patients/{patientID}", h.getPatient)
@@ -185,6 +193,19 @@ func (h *Handler) getPatient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteJSON(w, http.StatusOK, toPatientResponse(patient))
+}
+
+func (h *Handler) listPatients(w http.ResponseWriter, r *http.Request) {
+	patients, err := h.service.ListPatients(r.Context())
+	if err != nil {
+		platform.WriteError(w, http.StatusInternalServerError, "failed to list patients")
+		return
+	}
+	out := make([]patientResponse, len(patients))
+	for i, p := range patients {
+		out[i] = toPatientResponse(p)
+	}
+	platform.WriteJSON(w, http.StatusOK, out)
 }
 
 type encounterRequest struct {

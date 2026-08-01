@@ -88,6 +88,10 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Referral, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
+func (s *Service) CountByStatus(ctx context.Context) (map[string]int64, error) {
+	return s.repo.CountByStatus(ctx)
+}
+
 func (s *Service) ListForFacility(ctx context.Context, facilityID uuid.UUID) ([]Referral, error) {
 	return s.repo.ListForFacility(ctx, facilityID)
 }

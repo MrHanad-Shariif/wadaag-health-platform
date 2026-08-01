@@ -3,12 +3,15 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { PageHeader } from '../../shared/PageHeader'
+import { useToast } from '../../shared/useToast'
 import { listFacilities } from '../facilities/api'
 import { createReferral } from './api'
 import type { Urgency } from './types'
 
 export function NewReferralPage() {
   const navigate = useNavigate()
+  const { show } = useToast()
   const [searchParams] = useSearchParams()
   const patientId = searchParams.get('patient')
 
@@ -37,6 +40,7 @@ export function NewReferralPage() {
         urgency,
         reason,
       })
+      show('Referral sent')
       navigate(`/referrals/${referral.id}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create referral.')
@@ -46,8 +50,7 @@ export function NewReferralPage() {
 
   return (
     <div className="page page--narrow">
-      <p className="page-eyebrow">Referrals</p>
-      <h1>Refer patient</h1>
+      <PageHeader eyebrow="Referrals" title="Refer patient" />
 
       {facilitiesState.loading && <LoadingState />}
       {facilitiesState.error && <ErrorState message={facilitiesState.error} />}

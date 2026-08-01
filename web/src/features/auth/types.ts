@@ -13,6 +13,9 @@ export interface User {
   phone?: string
   role: Role
   status: string
+  role_id?: string
+  full_access: boolean
+  permissions?: string[]
 }
 
 export interface LoginResponse {

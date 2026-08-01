@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,7 +14,12 @@ import (
 )
 
 // Role is shared across every module that needs to gate access by who is
-// calling — identity owns issuing it, everyone else only reads it.
+// calling — identity owns issuing it, everyone else only reads it. This is
+// the original fixed-role system and still governs identity/records/
+// referrals/facilities. The newer Authentication module (roles table,
+// FullAccess/Permissions below) is a separate, additive permission system
+// scoped to itself, the patient list, and the dashboard — see the module's
+// docs for why the two coexist instead of one replacing the other.
 type Role string
 
 const (
@@ -27,10 +33,32 @@ const (
 )
 
 type Claims struct {
-	UserID     uuid.UUID  `json:"sub"`
-	Role       Role       `json:"role"`
-	FacilityID *uuid.UUID `json:"facility_id,omitempty"`
+	UserID      uuid.UUID  `json:"sub"`
+	Role        Role       `json:"role"`
+	FacilityID  *uuid.UUID `json:"facility_id,omitempty"`
+	RoleID      *uuid.UUID `json:"role_id,omitempty"`
+	FullAccess  bool       `json:"full_access,omitempty"`
+	Permissions []string   `json:"permissions,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// HasPermission checks the dynamic Authentication-module permission set —
+// "resource:action" — with FullAccess as an unconditional bypass.
+func (c *Claims) HasPermission(resource, action string) bool {
+	return c.FullAccess || slices.Contains(c.Permissions, resource+":"+action)
+}
+
+// TokenClaims is the input to issuing a token — grouped into a struct
+// because the set of things worth embedding (legacy role, facility,
+// dynamic permissions) has grown past what reads cleanly as positional
+// params.
+type TokenClaims struct {
+	UserID      uuid.UUID
+	Role        Role
+	FacilityID  *uuid.UUID
+	RoleID      *uuid.UUID
+	FullAccess  bool
+	Permissions []string
 }
 
 // TokenManager issues and verifies the JWTs used across every module's
@@ -51,20 +79,23 @@ func NewTokenManager(cfg Config) *TokenManager {
 	}
 }
 
-func (m *TokenManager) IssueAccessToken(userID uuid.UUID, role Role, facilityID *uuid.UUID) (string, error) {
-	return m.issue(userID, role, facilityID, m.accessTokenTTL)
+func (m *TokenManager) IssueAccessToken(c TokenClaims) (string, error) {
+	return m.issue(c, m.accessTokenTTL)
 }
 
-func (m *TokenManager) IssueRefreshToken(userID uuid.UUID, role Role, facilityID *uuid.UUID) (string, error) {
-	return m.issue(userID, role, facilityID, m.refreshTokenTTL)
+func (m *TokenManager) IssueRefreshToken(c TokenClaims) (string, error) {
+	return m.issue(c, m.refreshTokenTTL)
 }
 
-func (m *TokenManager) issue(userID uuid.UUID, role Role, facilityID *uuid.UUID, ttl time.Duration) (string, error) {
+func (m *TokenManager) issue(c TokenClaims, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID:     userID,
-		Role:       role,
-		FacilityID: facilityID,
+		UserID:      c.UserID,
+		Role:        c.Role,
+		FacilityID:  c.FacilityID,
+		RoleID:      c.RoleID,
+		FullAccess:  c.FullAccess,
+		Permissions: c.Permissions,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
@@ -120,8 +151,8 @@ func RequireAuth(tm *TokenManager) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireRoles gates a route to a fixed set of roles. It must run after
-// RequireAuth so Claims are already present in the context.
+// RequireRoles gates a route to a fixed set of legacy roles. It must run
+// after RequireAuth so Claims are already present in the context.
 func RequireRoles(roles ...Role) func(http.Handler) http.Handler {
 	allowed := make(map[Role]bool, len(roles))
 	for _, r := range roles {
@@ -138,6 +169,29 @@ func RequireRoles(roles ...Role) func(http.Handler) http.Handler {
 
 			if !allowed[claims.Role] {
 				WriteError(w, http.StatusForbidden, "role not permitted for this route")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePermission gates a route by the dynamic Authentication-module
+// permission set instead of the legacy role enum — used by the
+// Authentication module itself, the patient list, and the dashboard.
+// FullAccess (the administrator role) bypasses every check.
+func RequirePermission(resource, action string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok {
+				WriteError(w, http.StatusUnauthorized, "missing auth context")
+				return
+			}
+
+			if !claims.HasPermission(resource, action) {
+				WriteError(w, http.StatusForbidden, "missing required permission")
 				return
 			}
 

@@ -63,6 +63,26 @@ func (r *Repository) FindPatientByID(ctx context.Context, id uuid.UUID) (Patient
 	return patientFromRow(row), nil
 }
 
+func (r *Repository) ListPatients(ctx context.Context) ([]Patient, error) {
+	rows, err := r.q.ListPatients(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list patients: %w", err)
+	}
+	patients := make([]Patient, len(rows))
+	for i, row := range rows {
+		patients[i] = patientFromRow(row)
+	}
+	return patients, nil
+}
+
+func (r *Repository) CountPatients(ctx context.Context) (int64, error) {
+	count, err := r.q.CountPatients(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count patients: %w", err)
+	}
+	return count, nil
+}
+
 type CreateEncounterParams struct {
 	PatientID  uuid.UUID
 	FacilityID uuid.UUID
@@ -109,6 +129,14 @@ func (r *Repository) ListEncountersByPatient(ctx context.Context, patientID uuid
 		encounters[i] = encounterFromRow(row)
 	}
 	return encounters, nil
+}
+
+func (r *Repository) CountEncounters(ctx context.Context) (int64, error) {
+	count, err := r.q.CountEncounters(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count encounters: %w", err)
+	}
+	return count, nil
 }
 
 func (r *Repository) CreateObservation(ctx context.Context, encounterID uuid.UUID, obsType ObservationType, payload []byte, recordedBy uuid.UUID) (ClinicalObservation, error) {

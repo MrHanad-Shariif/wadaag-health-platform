@@ -23,6 +23,18 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{q: sqlcgen.New(db)}
 }
 
+func (r *Repository) CountByStatus(ctx context.Context) (map[string]int64, error) {
+	rows, err := r.q.CountReferralsByStatus(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count referrals by status: %w", err)
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[string(row.Status)] = row.Total
+	}
+	return counts, nil
+}
+
 type CreateReferralParams struct {
 	PatientID                  uuid.UUID
 	ReferringProviderID        uuid.UUID

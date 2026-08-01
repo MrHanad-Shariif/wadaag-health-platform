@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countFacilities = `-- name: CountFacilities :one
+SELECT count(*) FROM facilities
+`
+
+func (q *Queries) CountFacilities(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countFacilities)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createFacility = `-- name: CreateFacility :one
 INSERT INTO facilities (name, type, region, district, phone, address)
 VALUES ($1, $2, $3, $4, $5, $6)

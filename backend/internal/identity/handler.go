@@ -34,27 +34,31 @@ func (h *Handler) Routes() chi.Router {
 }
 
 type registerRequest struct {
-	Email    *string       `json:"email"`
-	Phone    *string       `json:"phone"`
-	Password string        `json:"password"`
-	Role     platform.Role `json:"role"`
+	Email    *string `json:"email"`
+	Phone    *string `json:"phone"`
+	Password string  `json:"password"`
 }
 
 type userResponse struct {
-	ID     string        `json:"id"`
-	Email  *string       `json:"email,omitempty"`
-	Phone  *string       `json:"phone,omitempty"`
-	Role   platform.Role `json:"role"`
-	Status string        `json:"status"`
+	ID          string        `json:"id"`
+	Email       *string       `json:"email,omitempty"`
+	Phone       *string       `json:"phone,omitempty"`
+	Role        platform.Role `json:"role"`
+	Status      string        `json:"status"`
+	RoleID      *string       `json:"role_id,omitempty"`
+	FullAccess  bool          `json:"full_access"`
+	Permissions []string      `json:"permissions,omitempty"`
 }
 
-func toUserResponse(u User) userResponse {
+func toUserResponse(u User, access Access) userResponse {
+	var roleID *string
+	if access.RoleID != nil {
+		s := access.RoleID.String()
+		roleID = &s
+	}
 	return userResponse{
-		ID:     u.ID.String(),
-		Email:  u.Email,
-		Phone:  u.Phone,
-		Role:   u.Role,
-		Status: u.Status,
+		ID: u.ID.String(), Email: u.Email, Phone: u.Phone, Role: u.Role, Status: u.Status,
+		RoleID: roleID, FullAccess: access.FullAccess, Permissions: access.Permissions,
 	}
 }
 
@@ -66,10 +70,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.service.Register(r.Context(), RegisterInput{
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Password: req.Password,
-		Role:     req.Role,
+		Email: req.Email, Phone: req.Phone, Password: req.Password,
 	})
 	if err != nil {
 		if errors.Is(err, ErrDuplicateUser) {
@@ -80,7 +81,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	platform.WriteJSON(w, http.StatusCreated, toUserResponse(user))
+	platform.WriteJSON(w, http.StatusCreated, toUserResponse(user, Access{}))
 }
 
 type loginRequest struct {
@@ -101,7 +102,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, tokens, err := h.service.Login(r.Context(), req.Identifier, req.Password)
+	user, tokens, access, err := h.service.Login(r.Context(), req.Identifier, req.Password)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			platform.WriteError(w, http.StatusUnauthorized, err.Error())
@@ -112,7 +113,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	platform.WriteJSON(w, http.StatusOK, loginResponse{
-		User:         toUserResponse(user),
+		User:         toUserResponse(user, access),
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 	})
@@ -135,5 +136,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	platform.WriteJSON(w, http.StatusOK, toUserResponse(user))
+	platform.WriteJSON(w, http.StatusOK, toUserResponse(user, Access{
+		RoleID: claims.RoleID, FullAccess: claims.FullAccess, Permissions: claims.Permissions,
+	}))
 }

@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, phone, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id
 `
 
 type CreateUserParams struct {
@@ -41,12 +41,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoleID,
 	)
 	return i, err
 }
 
 const findUserByEmailOrPhone = `-- name: FindUserByEmailOrPhone :one
-SELECT id, email, phone, password_hash, role, status, created_at, updated_at
+SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id
 FROM users
 WHERE email = $1 OR phone = $1
 `
@@ -63,12 +64,13 @@ func (q *Queries) FindUserByEmailOrPhone(ctx context.Context, email pgtype.Text)
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoleID,
 	)
 	return i, err
 }
 
 const findUserByID = `-- name: FindUserByID :one
-SELECT id, email, phone, password_hash, role, status, created_at, updated_at
+SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id
 FROM users
 WHERE id = $1
 `
@@ -85,6 +87,7 @@ func (q *Queries) FindUserByID(ctx context.Context, id pgtype.UUID) (User, error
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoleID,
 	)
 	return i, err
 }

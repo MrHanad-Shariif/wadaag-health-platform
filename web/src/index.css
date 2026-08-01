@@ -1,4 +1,13 @@
 :root {
+  /* Chart status colors — fixed, never themed (same value in light and
+     dark, per the dataviz skill's validated status palette). Distinct
+     from the UI's --success/--warning/--danger below so a status color in
+     a chart never gets reinterpreted by a theme swap. */
+  --chart-good: #0ca30c;
+  --chart-warning: #fab219;
+  --chart-critical: #d03b3b;
+  --chart-neutral: #898781;
+
   /* Warm sand + deep teal — deliberately not the default white/blue or
      near-black/violet SaaS look. Sand and terracotta nod to the region
      this product serves; teal reads clinical without being sterile. */

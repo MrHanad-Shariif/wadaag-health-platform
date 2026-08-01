@@ -46,6 +46,35 @@ func (q *Queries) AcceptReferral(ctx context.Context, arg AcceptReferralParams) 
 	return i, err
 }
 
+const countReferralsByStatus = `-- name: CountReferralsByStatus :many
+SELECT status, count(*) AS total FROM referrals GROUP BY status
+`
+
+type CountReferralsByStatusRow struct {
+	Status ReferralStatus `json:"status"`
+	Total  int64          `json:"total"`
+}
+
+func (q *Queries) CountReferralsByStatus(ctx context.Context) ([]CountReferralsByStatusRow, error) {
+	rows, err := q.db.Query(ctx, countReferralsByStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountReferralsByStatusRow
+	for rows.Next() {
+		var i CountReferralsByStatusRow
+		if err := rows.Scan(&i.Status, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createReferral = `-- name: CreateReferral :one
 INSERT INTO referrals (
     patient_id, referring_provider_id, referring_facility_id, receiving_facility_id,

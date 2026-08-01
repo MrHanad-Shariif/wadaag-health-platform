@@ -1,35 +1,61 @@
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useFetch } from '../../shared/useFetch'
-import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { DataTable, type DataTableColumn } from '../../shared/DataTable'
+import { PageHeader } from '../../shared/PageHeader'
 import { listInbox } from './api'
 import { formatStatus } from './format'
+import type { Referral } from './types'
 
 export function ReferralsInboxPage() {
+  const navigate = useNavigate()
   const state = useFetch(() => listInbox(), [])
 
+  const columns: DataTableColumn<Referral>[] = [
+    {
+      key: 'status',
+      header: 'Status',
+      sortable: true,
+      value: (r) => r.status,
+      render: (r) => <span className={`status-pill status-pill--${r.status}`}>{formatStatus(r.status)}</span>,
+    },
+    {
+      key: 'specialty_requested',
+      header: 'Specialty',
+      sortable: true,
+      value: (r) => r.specialty_requested,
+      render: (r) => r.specialty_requested,
+    },
+    {
+      key: 'urgency',
+      header: 'Urgency',
+      sortable: true,
+      value: (r) => r.urgency,
+      render: (r) => <span className={`urgency-tag urgency-tag--${r.urgency}`}>{r.urgency}</span>,
+    },
+    { key: 'reason', header: 'Reason', render: (r) => r.reason },
+    {
+      key: 'created_at',
+      header: 'Created',
+      sortable: true,
+      value: (r) => r.created_at,
+      render: (r) => new Date(r.created_at).toLocaleDateString(),
+    },
+  ]
+
   return (
-    <div className="page">
-      <p className="page-eyebrow">Referrals</p>
-      <h1>Inbox</h1>
-      <p className="page-subtitle">Referrals routed to your facility.</p>
+    <div className="page page--wide">
+      <PageHeader eyebrow="Referrals" title="Inbox" description="Referrals routed to your facility." />
 
-      {state.loading && <LoadingState />}
-      {state.error && <ErrorState message={state.error} />}
-      {state.data && !state.data.length && <p className="empty-state">No referrals yet.</p>}
-
-      {state.data && state.data.length > 0 && (
-        <ul className="record-list">
-          {state.data.map((r) => (
-            <li key={r.id} data-status={r.status}>
-              <Link to={`/referrals/${r.id}`}>
-                <span className={`status-pill status-pill--${r.status}`}>{formatStatus(r.status)}</span>{' '}
-                {r.specialty_requested} · <span className={`urgency-tag urgency-tag--${r.urgency}`}>{r.urgency}</span>
-              </Link>
-              <span className="record-list__note">{r.reason}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <DataTable
+        columns={columns}
+        data={state.data}
+        loading={state.loading}
+        error={state.error}
+        getRowKey={(r) => r.id}
+        onRowClick={(r) => navigate(`/referrals/${r.id}`)}
+        searchPlaceholder="Search referrals…"
+        emptyMessage="No referrals yet."
+      />
     </div>
   )
 }

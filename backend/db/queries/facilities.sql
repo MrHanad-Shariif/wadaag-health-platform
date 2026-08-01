@@ -16,3 +16,6 @@ RETURNING *;
 
 -- name: FindProviderByUserID :one
 SELECT * FROM providers WHERE user_id = $1;
+
+-- name: CountFacilities :one
+SELECT count(*) FROM facilities;

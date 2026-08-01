@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowLeft } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { PageHeader } from '../../shared/PageHeader'
+import { useToast } from '../../shared/useToast'
 import { useAuth } from '../auth/useAuth'
 import { createObservation, getEncounter, listObservations } from './api'
 import type { ObservationType } from './types'
@@ -11,6 +12,7 @@ import type { ObservationType } from './types'
 export function EncounterDetailPage() {
   const { encounterId } = useParams<{ encounterId: string }>()
   const { user } = useAuth()
+  const { show } = useToast()
   const isProvider = user?.role === 'physician' || user?.role === 'hospital_admin'
 
   const encounterState = useFetch(() => getEncounter(encounterId!), [encounterId])
@@ -33,6 +35,7 @@ export function EncounterDetailPage() {
       setNote('')
       setIcd10('')
       observationsState.reload()
+      show('Observation added')
     } catch (err) {
       setCreateError(err instanceof ApiError ? err.message : 'Could not add observation.')
     } finally {
@@ -46,11 +49,11 @@ export function EncounterDetailPage() {
 
   return (
     <div className="page">
-      <Link to={`/patients/${encounter.patient_id}`} className="back-link">
-        <ArrowLeft size={16} aria-hidden="true" /> Back to patient
-      </Link>
-      <h1>{encounter.type.replace('_', ' ')} encounter</h1>
-      <p className="page-subtitle">{new Date(encounter.occurred_at).toLocaleString()}</p>
+      <PageHeader
+        breadcrumb={[{ label: 'Patient', to: `/patients/${encounter.patient_id}` }, { label: 'Encounter' }]}
+        title={`${encounter.type.replace('_', ' ')} encounter`}
+        description={new Date(encounter.occurred_at).toLocaleString()}
+      />
       {encounter.notes && <p>{encounter.notes}</p>}
 
       <section>

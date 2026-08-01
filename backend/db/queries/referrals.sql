@@ -34,3 +34,6 @@ RETURNING *;
 
 -- name: ListReferralStatusEvents :many
 SELECT * FROM referral_status_events WHERE referral_id = $1 ORDER BY occurred_at;
+
+-- name: CountReferralsByStatus :many
+SELECT status, count(*) AS total FROM referrals GROUP BY status;

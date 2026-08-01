@@ -66,6 +66,22 @@ func (s *Service) GetPatient(ctx context.Context, id uuid.UUID) (Patient, error)
 	return s.repo.FindPatientByID(ctx, id)
 }
 
+// ListPatients returns every registered patient across all facilities —
+// unlike GetPatient this bypasses consent grants, so callers must gate it
+// to a role that's meant to see system-wide patient data (currently
+// system_admin only, checked in the handler).
+func (s *Service) ListPatients(ctx context.Context) ([]Patient, error) {
+	return s.repo.ListPatients(ctx)
+}
+
+func (s *Service) CountPatients(ctx context.Context) (int64, error) {
+	return s.repo.CountPatients(ctx)
+}
+
+func (s *Service) CountEncounters(ctx context.Context) (int64, error) {
+	return s.repo.CountEncounters(ctx)
+}
+
 // GetPatientUserID implements referrals.PatientLookup — lets referrals
 // resolve the patient-self identity for its own consent check without
 // importing this package's full Patient type.

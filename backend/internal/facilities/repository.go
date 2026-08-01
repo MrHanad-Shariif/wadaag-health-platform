@@ -24,6 +24,14 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{q: sqlcgen.New(db)}
 }
 
+func (r *Repository) CountFacilities(ctx context.Context) (int64, error) {
+	count, err := r.q.CountFacilities(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count facilities: %w", err)
+	}
+	return count, nil
+}
+
 func (r *Repository) CreateFacility(ctx context.Context, name string, facilityType Type, region, district, phone, address *string) (Facility, error) {
 	row, err := r.q.CreateFacility(ctx, sqlcgen.CreateFacilityParams{
 		Name:     name,

@@ -1,9 +1,9 @@
-// Command seed populates local dev Postgres with synthetic accounts, two
-// facilities, and provider affiliations, so the referral+consent+audit
-// flow is exercisable immediately after `make up`. Run with `make seed`
-// (or `go run ./db/seed`). Never point this at anything but a local/dev
-// database — it's meant to be re-run freely and skips rows that already
-// exist rather than erroring.
+// Command seed populates local dev Postgres with the two demo facilities
+// and exactly one account: the system administrator. Every other user and
+// role is created from the webapp's Authentication module by the admin,
+// not hardcoded here. Run with `make seed` (or `go run ./db/seed`). Never
+// point this at anything but a local/dev database — it's meant to be
+// re-run freely and skips rows that already exist rather than erroring.
 package main
 
 import (
@@ -15,21 +15,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/wadaag/health-platform/backend/internal/authz"
 	"github.com/wadaag/health-platform/backend/internal/facilities"
 	"github.com/wadaag/health-platform/backend/internal/identity"
 	"github.com/wadaag/health-platform/backend/internal/platform"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// All seed accounts share this password for convenience in local dev only.
-const devPassword = "wadaag-dev-2026"
-
-type seedUser struct {
-	email    string
-	password string
-	role     platform.Role
-	facility string // key into seedFacilities, or "" for none
-}
+const (
+	adminEmail    = "administrator@wadaaghealthy.com"
+	adminPassword = "wadaaghealthy.com@2026"
+	adminRoleName = "Administrator"
+)
 
 func seedFacilities() map[string]struct {
 	Name string
@@ -41,19 +38,6 @@ func seedFacilities() map[string]struct {
 	}{
 		"hodan_hospital":     {Name: "Hodan District Hospital", Type: facilities.TypeHospital},
 		"banadir_specialist": {Name: "Banadir Specialist Clinic", Type: facilities.TypeClinic},
-	}
-}
-
-func seedUsers() []seedUser {
-	return []seedUser{
-		{email: "physician@wadaag.dev", password: devPassword, role: platform.RolePhysician, facility: "hodan_hospital"},
-		{email: "specialist@wadaag.dev", password: devPassword, role: platform.RolePhysician, facility: "banadir_specialist"},
-		{email: "hospital-admin@wadaag.dev", password: devPassword, role: platform.RoleHospitalAdmin, facility: "hodan_hospital"},
-		{email: "lab-tech@wadaag.dev", password: devPassword, role: platform.RoleLabTech},
-		{email: "pharmacist@wadaag.dev", password: devPassword, role: platform.RolePharmacist},
-		{email: "insurer@wadaag.dev", password: devPassword, role: platform.RoleInsurer},
-		{email: "admin@wadaag.dev", password: devPassword, role: platform.RoleSystemAdmin},
-		{email: "patient@wadaag.dev", password: devPassword, role: platform.RolePatient},
 	}
 }
 
@@ -75,53 +59,99 @@ func main() {
 		log.Fatalf("seed failed: %v", err)
 	}
 
-	fmt.Println("seed complete — all accounts use password:", devPassword)
+	fmt.Printf("seed complete — sign in as %s / %s\n", adminEmail, adminPassword)
 }
 
 func run(ctx context.Context, db *pgxpool.Pool) error {
-	identityRepo := identity.NewRepository(db)
 	facilitiesRepo := facilities.NewRepository(db)
+	if _, err := seedFacilityRows(ctx, facilitiesRepo); err != nil {
+		return err
+	}
 
-	facilityIDs, err := seedFacilityRows(ctx, facilitiesRepo)
+	authzRepo := authz.NewRepository(db)
+	adminRoleID, err := seedAdministratorRole(ctx, authzRepo)
 	if err != nil {
 		return err
 	}
 
-	for _, su := range seedUsers() {
-		email := su.email
-		hash, err := bcrypt.GenerateFromPassword([]byte(su.password), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("hash password for %s: %w", email, err)
-		}
+	identityRepo := identity.NewRepository(db)
+	if err := seedAdministratorUser(ctx, identityRepo, authzRepo, adminRoleID); err != nil {
+		return err
+	}
 
-		user, err := identityRepo.CreateUser(ctx, &email, nil, string(hash), su.role)
-		if err != nil {
-			if !errors.Is(err, identity.ErrDuplicateUser) {
-				return fmt.Errorf("create user %s: %w", email, err)
-			}
-			fmt.Fprintf(os.Stderr, "skip %s: already seeded\n", email)
-			user, err = identityRepo.FindByEmailOrPhone(ctx, email)
-			if err != nil {
-				return fmt.Errorf("look up existing user %s: %w", email, err)
-			}
-		} else {
-			fmt.Printf("seeded %s (%s)\n", email, su.role)
-		}
+	return nil
+}
 
-		if su.facility == "" {
-			continue
+// seedAdministratorRole creates (or finds) the full-access role and makes
+// sure it holds every permission in the catalog — re-running the seed
+// after a new resource/action is added to the catalog keeps it complete.
+func seedAdministratorRole(ctx context.Context, repo *authz.Repository) (uuid.UUID, error) {
+	roles, err := repo.ListRoles(ctx)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("list existing roles: %w", err)
+	}
+
+	var roleID uuid.UUID
+	found := false
+	for _, r := range roles {
+		if r.Name == adminRoleName {
+			roleID = r.ID
+			found = true
+			break
 		}
-		facilityID, ok := facilityIDs[su.facility]
-		if !ok {
-			return fmt.Errorf("unknown facility key %q for %s", su.facility, email)
+	}
+
+	if !found {
+		description := "Full access to every module, including Authentication."
+		role, err := repo.CreateRole(ctx, adminRoleName, &description, true)
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("create administrator role: %w", err)
 		}
-		if _, err := facilitiesRepo.CreateProvider(ctx, user.ID, facilityID, nil, nil); err != nil {
-			if errors.Is(err, facilities.ErrDuplicateProvider) {
-				continue
-			}
-			return fmt.Errorf("affiliate %s with facility: %w", email, err)
+		roleID = role.ID
+		fmt.Printf("seeded role %s (full access)\n", adminRoleName)
+	} else {
+		fmt.Fprintf(os.Stderr, "skip role %s: already seeded\n", adminRoleName)
+	}
+
+	catalog, err := repo.ListPermissions(ctx)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("list permission catalog: %w", err)
+	}
+	permissionIDs := make([]uuid.UUID, len(catalog))
+	for i, p := range catalog {
+		permissionIDs[i] = p.ID
+	}
+	if err := repo.ReplaceRolePermissions(ctx, roleID, permissionIDs); err != nil {
+		return uuid.UUID{}, fmt.Errorf("grant all permissions to %s: %w", adminRoleName, err)
+	}
+
+	return roleID, nil
+}
+
+func seedAdministratorUser(ctx context.Context, identityRepo *identity.Repository, authzRepo *authz.Repository, roleID uuid.UUID) error {
+	email := adminEmail
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash administrator password: %w", err)
+	}
+
+	user, err := identityRepo.CreateUser(ctx, &email, nil, string(hash), platform.RoleSystemAdmin)
+	if err != nil {
+		if !errors.Is(err, identity.ErrDuplicateUser) {
+			return fmt.Errorf("create administrator user: %w", err)
 		}
-		fmt.Printf("  affiliated with %s\n", su.facility)
+		fmt.Fprintf(os.Stderr, "skip user %s: already seeded\n", email)
+		user, err = identityRepo.FindByEmailOrPhone(ctx, email)
+		if err != nil {
+			return fmt.Errorf("look up existing administrator: %w", err)
+		}
+	} else {
+		fmt.Printf("seeded user %s\n", email)
+	}
+
+	if err := authzRepo.SetUserRole(ctx, user.ID, &roleID); err != nil {
+		return fmt.Errorf("assign %s role to administrator: %w", adminRoleName, err)
 	}
 
 	return nil

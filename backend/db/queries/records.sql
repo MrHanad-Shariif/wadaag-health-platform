@@ -6,6 +6,12 @@ RETURNING *;
 -- name: FindPatientByID :one
 SELECT * FROM patients WHERE id = $1;
 
+-- name: ListPatients :many
+SELECT * FROM patients ORDER BY created_at DESC;
+
+-- name: CountPatients :one
+SELECT count(*) FROM patients;
+
 -- name: CreateEncounter :one
 INSERT INTO encounters (patient_id, facility_id, provider_id, type, notes, occurred_at)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -24,3 +30,6 @@ RETURNING *;
 
 -- name: ListObservationsByEncounter :many
 SELECT * FROM clinical_observations WHERE encounter_id = $1 ORDER BY recorded_at;
+
+-- name: CountEncounters :one
+SELECT count(*) FROM encounters;

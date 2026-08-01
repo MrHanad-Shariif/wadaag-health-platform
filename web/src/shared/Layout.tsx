@@ -1,62 +1,119 @@
-import { LayoutDashboard, LogOut, ClipboardList, Moon, Sun, UserPlus } from 'lucide-react'
+import { useState, type ComponentType } from 'react'
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  ClipboardList,
+  LayoutDashboard,
+  ShieldCheck,
+  UserCog,
+  UserPlus,
+  Users,
+} from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../features/auth/useAuth'
-import { useTheme } from './useTheme'
+import { hasPermission } from '../features/auth/permissions'
+import { UserMenu } from './UserMenu'
 import { BrandMark } from './BrandMark'
 
+interface NavItem {
+  to: string
+  label: string
+  icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>
+  end?: boolean
+}
+
+interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
 export function Layout() {
-  const { user, logout } = useAuth()
-  const { theme, toggleTheme } = useTheme()
+  const { user } = useAuth()
   const isProvider = user?.role === 'physician' || user?.role === 'hospital_admin'
+  const isSystemAdmin = user?.role === 'system_admin'
+  const canSeeAuthentication = hasPermission(user, 'users', 'read') || hasPermission(user, 'roles', 'read')
+
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar_collapsed') === 'true')
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('sidebar_collapsed', String(next))
+      return next
+    })
+  }
+
+  const groups: NavGroup[] = [
+    { label: 'Workspace', items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true }] },
+  ]
+  if (isProvider) {
+    groups.push({
+      label: 'Care',
+      items: [
+        { to: '/patients/new', label: 'New patient', icon: UserPlus },
+        { to: '/referrals', label: 'Referrals', icon: ClipboardList },
+      ],
+    })
+  }
+  if (isSystemAdmin) {
+    groups.push({ label: 'Records', items: [{ to: '/patients', label: 'Patients', icon: Users }] })
+  }
+  if (canSeeAuthentication) {
+    groups.push({
+      label: 'Administration',
+      items: [
+        { to: '/authentication/users', label: 'Users', icon: UserCog },
+        { to: '/authentication/roles', label: 'Roles', icon: ShieldCheck },
+      ],
+    })
+  }
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
         <div className="sidebar-brand">
           <BrandMark />
           <span>Wadaag Health</span>
         </div>
 
         <nav className="sidebar-nav">
-          <NavLink to="/" end className="sidebar-link">
-            <LayoutDashboard size={18} aria-hidden="true" />
-            <span>Dashboard</span>
-          </NavLink>
-          {isProvider && (
-            <>
-              <NavLink to="/patients/new" className="sidebar-link">
-                <UserPlus size={18} aria-hidden="true" />
-                <span>New patient</span>
-              </NavLink>
-              <NavLink to="/referrals" className="sidebar-link">
-                <ClipboardList size={18} aria-hidden="true" />
-                <span>Referrals</span>
-              </NavLink>
-            </>
-          )}
+          {groups.map((group) => (
+            <div className="sidebar-group" key={group.label}>
+              <span className="sidebar-group__label">{group.label}</span>
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to} end={item.end} className="sidebar-link" title={item.label}>
+                  <item.icon size={18} aria-hidden={true} />
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
         </nav>
 
-        <div className="sidebar-user">
-          <div className="sidebar-user__identity">
-            <span className="sidebar-user__name">{user?.email ?? user?.phone}</span>
-            <span className="sidebar-user__role">{user?.role.replace('_', ' ')}</span>
-          </div>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          >
-            {theme === 'dark' ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
-          </button>
-          <button type="button" className="icon-button" onClick={logout} aria-label="Sign out">
-            <LogOut size={18} aria-hidden="true" />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <ChevronsRight size={16} aria-hidden="true" /> : <ChevronsLeft size={16} aria-hidden="true" />}
+          <span>Collapse</span>
+        </button>
       </aside>
-      <main className="app-content">
-        <Outlet />
-      </main>
+
+      <div className="app-main">
+        <header className="topbar">
+          <span className="topbar__brand">
+            <BrandMark size={20} />
+            <span>Wadaag Health</span>
+          </span>
+          <div className="topbar__spacer" />
+          <UserMenu />
+        </header>
+        <main className="app-content">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

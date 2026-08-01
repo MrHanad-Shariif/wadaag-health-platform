@@ -1,10 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
+import { PageHeader } from '../../shared/PageHeader'
+import { useToast } from '../../shared/useToast'
 import { createPatient } from './api'
 
 export function NewPatientPage() {
   const navigate = useNavigate()
+  const { show } = useToast()
   const [fullName, setFullName] = useState('')
   const [dateOfBirth, setDateOfBirth] = useState('')
   const [sex, setSex] = useState('')
@@ -25,6 +28,7 @@ export function NewPatientPage() {
         phone: phone || undefined,
         national_id: nationalId || undefined,
       })
+      show(`${patient.full_name} registered`)
       navigate(`/patients/${patient.id}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not register patient.')
@@ -34,8 +38,7 @@ export function NewPatientPage() {
 
   return (
     <div className="page page--narrow">
-      <p className="page-eyebrow">Records</p>
-      <h1>Register a patient</h1>
+      <PageHeader eyebrow="Records" title="Register a patient" />
       <form className="form" onSubmit={handleSubmit}>
         <label htmlFor="fullName">Full name</label>
         <input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
@@ -56,7 +59,11 @@ export function NewPatientPage() {
         <label htmlFor="nationalId">National ID</label>
         <input id="nationalId" value={nationalId} onChange={(e) => setNationalId(e.target.value)} />
 
-        {error && <p role="alert" className="form-error">{error}</p>}
+        {error && (
+          <p role="alert" className="form-error">
+            {error}
+          </p>
+        )}
 
         <button type="submit" disabled={submitting}>
           {submitting ? 'Saving…' : 'Register patient'}
