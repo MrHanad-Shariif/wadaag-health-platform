@@ -60,6 +60,27 @@ async function requestForm<T>(path: string, form: FormData, init?: RequestInit):
   return res.json() as Promise<T>
 }
 
+// Like request(), but for binary responses (e.g. file downloads): returns
+// the raw Blob instead of parsing the body as JSON.
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const token = localStorage.getItem('access_token')
+
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
+  })
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body.error ?? res.statusText)
+  }
+
+  return res.blob()
+}
+
 export const apiClient = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
@@ -67,4 +88,5 @@ export const apiClient = {
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   postForm: <T>(path: string, form: FormData) => requestForm<T>(path, form, { method: 'POST' }),
+  getBlob: (path: string) => requestBlob(path),
 }

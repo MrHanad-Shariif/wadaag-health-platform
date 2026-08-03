@@ -76,7 +76,7 @@ func (q *Queries) FindRoleByID(ctx context.Context, id pgtype.UUID) (Role, error
 }
 
 const findUserWithRoleByID = `-- name: FindUserWithRoleByID :one
-SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, r.name AS role_name
+SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, u.full_name, r.name AS role_name
 FROM users u
 LEFT JOIN roles r ON u.role_id = r.id
 WHERE u.id = $1
@@ -90,6 +90,7 @@ type FindUserWithRoleByIDRow struct {
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	RoleID    pgtype.UUID        `json:"role_id"`
+	FullName  pgtype.Text        `json:"full_name"`
 	RoleName  pgtype.Text        `json:"role_name"`
 }
 
@@ -104,6 +105,7 @@ func (q *Queries) FindUserWithRoleByID(ctx context.Context, id pgtype.UUID) (Fin
 		&i.Status,
 		&i.CreatedAt,
 		&i.RoleID,
+		&i.FullName,
 		&i.RoleName,
 	)
 	return i, err
@@ -227,7 +229,7 @@ func (q *Queries) ListRoles(ctx context.Context) ([]Role, error) {
 }
 
 const listUsersWithRole = `-- name: ListUsersWithRole :many
-SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, r.name AS role_name
+SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, u.full_name, r.name AS role_name
 FROM users u
 LEFT JOIN roles r ON u.role_id = r.id
 ORDER BY u.created_at DESC
@@ -241,6 +243,7 @@ type ListUsersWithRoleRow struct {
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	RoleID    pgtype.UUID        `json:"role_id"`
+	FullName  pgtype.Text        `json:"full_name"`
 	RoleName  pgtype.Text        `json:"role_name"`
 }
 
@@ -261,6 +264,7 @@ func (q *Queries) ListUsersWithRole(ctx context.Context) ([]ListUsersWithRoleRow
 			&i.Status,
 			&i.CreatedAt,
 			&i.RoleID,
+			&i.FullName,
 			&i.RoleName,
 		); err != nil {
 			return nil, err
@@ -317,7 +321,7 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, e
 
 const updateUserRoleID = `-- name: UpdateUserRoleID :one
 UPDATE users SET role_id = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
 `
 
 type UpdateUserRoleIDParams struct {
@@ -339,13 +343,14 @@ func (q *Queries) UpdateUserRoleID(ctx context.Context, arg UpdateUserRoleIDPara
 		&i.UpdatedAt,
 		&i.RoleID,
 		&i.VerifiedAt,
+		&i.FullName,
 	)
 	return i, err
 }
 
 const updateUserStatus = `-- name: UpdateUserStatus :one
 UPDATE users SET status = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
 `
 
 type UpdateUserStatusParams struct {
@@ -367,6 +372,7 @@ func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusPara
 		&i.UpdatedAt,
 		&i.RoleID,
 		&i.VerifiedAt,
+		&i.FullName,
 	)
 	return i, err
 }

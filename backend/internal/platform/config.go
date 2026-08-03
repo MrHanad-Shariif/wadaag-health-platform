@@ -23,6 +23,14 @@ type Config struct {
 	// "Needs a decision from the product owner" section); local disk is the
 	// deliberate choice for this phase.
 	UploadDir string
+	// EncryptionKey is the pgcrypto pgp_sym_encrypt/pgp_sym_decrypt symmetric
+	// key used for application-layer column encryption of specific sensitive
+	// columns (patients.national_id, patient_medical_history's six jsonb
+	// columns — see db/migrations/0024_encrypt_sensitive_columns.up.sql).
+	// Passed as a query parameter on every affected query (internal/records),
+	// never stored as a DB-level GUC/current_setting and never hardcoded in
+	// application SQL.
+	EncryptionKey string
 }
 
 func LoadConfig() (Config, error) {
@@ -34,6 +42,7 @@ func LoadConfig() (Config, error) {
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 		Env:             getEnv("APP_ENV", "development"),
 		UploadDir:       getEnv("UPLOAD_DIR", "./uploads"),
+		EncryptionKey:   getEnv("ENCRYPTION_KEY", ""),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -41,6 +50,13 @@ func LoadConfig() (Config, error) {
 			return Config{}, fmt.Errorf("JWT_SECRET must be set outside development")
 		}
 		cfg.JWTSecret = "dev-only-insecure-secret-do-not-use-in-production"
+	}
+
+	if cfg.EncryptionKey == "" {
+		if cfg.Env != "development" {
+			return Config{}, fmt.Errorf("ENCRYPTION_KEY must be set outside development")
+		}
+		cfg.EncryptionKey = "dev-only-insecure-encryption-key-do-not-use-in-production"
 	}
 
 	return cfg, nil

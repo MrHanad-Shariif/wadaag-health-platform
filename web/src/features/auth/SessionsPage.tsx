@@ -7,8 +7,9 @@ import { useToast } from '../../shared/useToast'
 import { listSessions, revokeSession } from './api'
 import type { Session } from './types'
 
-// Phase 0 stub — lives under features/auth for now; move under a
-// Settings area once Phase 9 lands.
+// Still lives under features/auth (that's where the session-management API
+// calls live) but is now only ever rendered as the "Sessions" tab of
+// features/settings/SettingsPage — see that component's TABS list.
 export function SessionsPage() {
   const state = useFetch(() => listSessions(), [])
   const { show } = useToast()

@@ -1,6 +1,6 @@
 -- name: CreateUser :one
-INSERT INTO users (email, phone, password_hash, role)
-VALUES ($1, $2, $3, $4)
+INSERT INTO users (email, phone, password_hash, role, full_name)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: FindUserByEmailOrPhone :one
@@ -83,3 +83,9 @@ WHERE id = $1;
 UPDATE users
 SET password_hash = $2, updated_at = now()
 WHERE id = $1;
+
+-- name: UpdateUserFullName :one
+UPDATE users
+SET full_name = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

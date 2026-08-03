@@ -103,9 +103,9 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, phone, password_hash, role)
-VALUES ($1, $2, $3, $4)
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
+INSERT INTO users (email, phone, password_hash, role, full_name)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
 `
 
 type CreateUserParams struct {
@@ -113,6 +113,7 @@ type CreateUserParams struct {
 	Phone        pgtype.Text `json:"phone"`
 	PasswordHash string      `json:"password_hash"`
 	Role         UserRole    `json:"role"`
+	FullName     pgtype.Text `json:"full_name"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -121,6 +122,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.Phone,
 		arg.PasswordHash,
 		arg.Role,
+		arg.FullName,
 	)
 	var i User
 	err := row.Scan(
@@ -134,6 +136,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.RoleID,
 		&i.VerifiedAt,
+		&i.FullName,
 	)
 	return i, err
 }
@@ -202,7 +205,7 @@ func (q *Queries) FindRefreshTokenByHash(ctx context.Context, tokenHash string) 
 }
 
 const findUserByEmailOrPhone = `-- name: FindUserByEmailOrPhone :one
-SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
+SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
 FROM users
 WHERE email = $1 OR phone = $1
 `
@@ -221,12 +224,13 @@ func (q *Queries) FindUserByEmailOrPhone(ctx context.Context, email pgtype.Text)
 		&i.UpdatedAt,
 		&i.RoleID,
 		&i.VerifiedAt,
+		&i.FullName,
 	)
 	return i, err
 }
 
 const findUserByID = `-- name: FindUserByID :one
-SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
+SELECT id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
 FROM users
 WHERE id = $1
 `
@@ -245,6 +249,7 @@ func (q *Queries) FindUserByID(ctx context.Context, id pgtype.UUID) (User, error
 		&i.UpdatedAt,
 		&i.RoleID,
 		&i.VerifiedAt,
+		&i.FullName,
 	)
 	return i, err
 }
@@ -358,6 +363,37 @@ func (q *Queries) RevokeRefreshTokenForUser(ctx context.Context, arg RevokeRefre
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateUserFullName = `-- name: UpdateUserFullName :one
+UPDATE users
+SET full_name = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at, full_name
+`
+
+type UpdateUserFullNameParams struct {
+	ID       pgtype.UUID `json:"id"`
+	FullName pgtype.Text `json:"full_name"`
+}
+
+func (q *Queries) UpdateUserFullName(ctx context.Context, arg UpdateUserFullNameParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserFullName, arg.ID, arg.FullName)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.PasswordHash,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RoleID,
+		&i.VerifiedAt,
+		&i.FullName,
+	)
+	return i, err
 }
 
 const updateUserPasswordHash = `-- name: UpdateUserPasswordHash :exec

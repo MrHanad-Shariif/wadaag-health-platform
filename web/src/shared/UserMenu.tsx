@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { LogOut, Monitor, Moon, Stethoscope, Sun, UserCircle } from 'lucide-react'
+import { LogOut, Monitor, Moon, Settings, Stethoscope, Sun, UserCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/useAuth'
 import { getMyProfile } from '../features/profile/api'
@@ -105,7 +105,6 @@ export function UserMenu() {
               My provider profile
             </button>
           )}
-          {/* Phase 0 stub — move under Settings once Phase 9 lands. */}
           <button
             type="button"
             role="menuitem"
@@ -117,6 +116,18 @@ export function UserMenu() {
           >
             <Monitor size={16} aria-hidden="true" />
             Active sessions
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="user-menu__item"
+            onClick={() => {
+              setOpen(false)
+              navigate('/settings')
+            }}
+          >
+            <Settings size={16} aria-hidden="true" />
+            Settings
           </button>
           <button type="button" role="menuitem" className="user-menu__item user-menu__item--danger" onClick={logout}>
             <LogOut size={16} aria-hidden="true" />

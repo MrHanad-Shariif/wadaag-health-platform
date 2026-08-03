@@ -55,6 +55,63 @@ func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) 
 	return i, err
 }
 
+const listAuditEntries = `-- name: ListAuditEntries :many
+SELECT id, actor_user_id, actor_role, action, resource_type, resource_id, patient_id, result, metadata, occurred_at FROM audit_log
+WHERE ($1::uuid IS NULL OR actor_user_id = $1)
+  AND ($2::text IS NULL OR resource_type = $2)
+  AND ($3::text IS NULL OR result = $3::audit_result)
+ORDER BY occurred_at DESC
+LIMIT $4::int
+`
+
+type ListAuditEntriesParams struct {
+	ActorUserID  pgtype.UUID `json:"actor_user_id"`
+	ResourceType pgtype.Text `json:"resource_type"`
+	Result       pgtype.Text `json:"result"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+// General, filtered listing for the system_admin-only audit browser (see
+// audit.Handler's "GET /" route) — every filter is optional; a NULL/absent
+// arg matches every row for that column. result_limit is always supplied
+// by the caller (audit.Service caps it before it ever reaches here, see
+// Service.ListEntries).
+func (q *Queries) ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]AuditLog, error) {
+	rows, err := q.db.Query(ctx, listAuditEntries,
+		arg.ActorUserID,
+		arg.ResourceType,
+		arg.Result,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditLog
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.ActorRole,
+			&i.Action,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.PatientID,
+			&i.Result,
+			&i.Metadata,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAuditLogForPatient = `-- name: ListAuditLogForPatient :many
 SELECT id, actor_user_id, actor_role, action, resource_type, resource_id, patient_id, result, metadata, occurred_at FROM audit_log WHERE patient_id = $1 ORDER BY occurred_at DESC
 `

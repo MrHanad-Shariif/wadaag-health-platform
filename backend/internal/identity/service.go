@@ -48,6 +48,19 @@ const emailVerificationTokenTTL = 24 * time.Hour
 // redeemable — short-lived since it grants a password change.
 const passwordResetTokenTTL = 45 * time.Minute
 
+// minPasswordLength is the one password-strength rule enforced across every
+// path that sets a password (Register, CreateAccount, ResetPassword, and
+// ChangePassword) — pulled out as a named constant so all four stay in
+// sync rather than repeating the literal.
+const minPasswordLength = 8
+
+// ErrIncorrectCurrentPassword is returned by ChangePassword when the
+// presented current password doesn't match the caller's stored hash — kept
+// distinct from ErrInvalidCredentials (login) since this is a self-service
+// caller who is already authenticated via JWT, just proving they still
+// know their password before it's changed.
+var ErrIncorrectCurrentPassword = errors.New("current password is incorrect")
+
 // FacilityResolver lets identity populate a provider's facility claim on
 // login without depending on the facilities module's internals — it's
 // implemented by facilities.Service and wired in main.go.
@@ -94,6 +107,7 @@ type RegisterInput struct {
 	Email    *string
 	Phone    *string
 	Password string
+	FullName string
 }
 
 // Register is the public self-registration path. It always creates a
@@ -101,12 +115,17 @@ type RegisterInput struct {
 // staff-level legacy roles or admin permissions requires an administrator
 // to do it explicitly via the Users screen, closing the hole where the
 // caller used to be able to pick any role including system_admin.
+//
+// FullName is required here (unlike CreateAccount's optional fullName
+// pointer) — self-registration is the primary path new users take, and a
+// name is cheap to collect up front; the handler validates it's non-empty
+// before this is ever called.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) {
 	if in.Email == nil && in.Phone == nil {
 		return User{}, fmt.Errorf("email or phone is required")
 	}
-	if len(in.Password) < 8 {
-		return User{}, fmt.Errorf("password must be at least 8 characters")
+	if len(in.Password) < minPasswordLength {
+		return User{}, fmt.Errorf("password must be at least %d characters", minPasswordLength)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -114,18 +133,22 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) 
 		return User{}, fmt.Errorf("hash password: %w", err)
 	}
 
-	return s.repo.CreateUser(ctx, in.Email, in.Phone, string(hash), platform.RolePatient)
+	fullName := in.FullName
+	return s.repo.CreateUser(ctx, in.Email, in.Phone, string(hash), platform.RolePatient, &fullName)
 }
 
 // CreateAccount is the admin-driven path (Authentication > Users > Create):
 // unlike Register, the caller picks the legacy role explicitly. Used by
 // authz.Service, which assigns the dynamic permission role afterward.
-func (s *Service) CreateAccount(ctx context.Context, email, phone *string, password string, role platform.Role) (User, error) {
+// fullName is optional here (nilable) — an admin creating a staff account
+// may not always have the person's name at hand when provisioning
+// credentials, and it can be filled in later via UpdateFullName.
+func (s *Service) CreateAccount(ctx context.Context, email, phone *string, password string, role platform.Role, fullName *string) (User, error) {
 	if email == nil && phone == nil {
 		return User{}, fmt.Errorf("email or phone is required")
 	}
-	if len(password) < 8 {
-		return User{}, fmt.Errorf("password must be at least 8 characters")
+	if len(password) < minPasswordLength {
+		return User{}, fmt.Errorf("password must be at least %d characters", minPasswordLength)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -133,7 +156,14 @@ func (s *Service) CreateAccount(ctx context.Context, email, phone *string, passw
 		return User{}, fmt.Errorf("hash password: %w", err)
 	}
 
-	return s.repo.CreateUser(ctx, email, phone, string(hash), role)
+	return s.repo.CreateUser(ctx, email, phone, string(hash), role, fullName)
+}
+
+// UpdateFullName sets the caller's own display name — a single non-nullable
+// -once-set field, so unlike UpdateProfileInput (bio/photo/languages/
+// availability) there's no partial-update merge logic needed here.
+func (s *Service) UpdateFullName(ctx context.Context, userID uuid.UUID, fullName string) (User, error) {
+	return s.repo.UpdateFullName(ctx, userID, fullName)
 }
 
 type TokenPair struct {
@@ -148,6 +178,7 @@ type Access struct {
 	RoleID      *uuid.UUID
 	FullAccess  bool
 	Permissions []string
+	FacilityID  *uuid.UUID
 }
 
 // SessionMetadata is optional context about the client presenting
@@ -399,8 +430,8 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 		return ErrInvalidResetToken
 	}
 
-	if len(newPassword) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
+	if len(newPassword) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -432,6 +463,45 @@ func isPasswordResetTokenUsable(record PasswordResetToken, now time.Time) bool {
 	return now.Before(record.ExpiresAt)
 }
 
+// ChangePassword is the self-service counterpart to ResetPassword: a
+// logged-in user (already holding a valid JWT) changing their own
+// password, rather than someone locked out redeeming an emailed token.
+// Unlike ResetPassword, this requires the caller to first prove they still
+// know their current password — being authenticated via JWT alone isn't
+// treated as sufficient to change the credential a stolen JWT itself
+// wouldn't grant knowledge of. Also mirrors ResetPassword in revoking every
+// one of the user's other active sessions afterward, so a stolen session
+// doesn't survive the password change either.
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+		return ErrIncorrectCurrentPassword
+	}
+
+	if len(newPassword) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	if err := s.repo.UpdateUserPasswordHash(ctx, userID, string(hash)); err != nil {
+		return fmt.Errorf("update password hash: %w", err)
+	}
+
+	if err := s.repo.RevokeAllRefreshTokensForUser(ctx, userID); err != nil {
+		return fmt.Errorf("revoke sessions: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) issueTokens(ctx context.Context, user User, meta SessionMetadata) (TokenPair, Access, error) {
 	facilityID, err := s.facilities.FacilityIDForUser(ctx, user.ID)
 	if err != nil {
@@ -448,7 +518,7 @@ func (s *Service) issueTokens(ctx context.Context, user User, meta SessionMetada
 		return TokenPair{}, Access{}, fmt.Errorf("resolve access: %w", err)
 	}
 
-	access := Access{RoleID: roleID, FullAccess: fullAccess, Permissions: permissions}
+	access := Access{RoleID: roleID, FullAccess: fullAccess, Permissions: permissions, FacilityID: facilityID}
 
 	tc := platform.TokenClaims{
 		UserID: user.ID, Role: user.Role, FacilityID: facilityID,

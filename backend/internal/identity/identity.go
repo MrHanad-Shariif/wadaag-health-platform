@@ -17,6 +17,7 @@ type User struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	VerifiedAt   *time.Time
+	FullName     *string
 }
 
 // RefreshToken is a DB-backed session: the raw opaque token handed to the

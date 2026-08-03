@@ -240,12 +240,25 @@ func (h *Handler) listForPatient(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) inbox(w http.ResponseWriter, r *http.Request) {
 	claims, ok := platform.ClaimsFromContext(r.Context())
-	if !ok || claims.FacilityID == nil {
-		platform.WriteError(w, http.StatusForbidden, "actor has no facility affiliation")
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
 		return
 	}
 
-	list, err := h.service.ListForFacility(r.Context(), *claims.FacilityID)
+	// system_admin has no facility of its own to scope by — give it the
+	// platform-wide oversight list instead of 403ing. Every other role
+	// still needs a real facility affiliation.
+	var list []Referral
+	var err error
+	if claims.Role == platform.RoleSystemAdmin {
+		list, err = h.service.ListAll(r.Context())
+	} else {
+		if claims.FacilityID == nil {
+			platform.WriteError(w, http.StatusForbidden, "actor has no facility affiliation")
+			return
+		}
+		list, err = h.service.ListForFacility(r.Context(), *claims.FacilityID)
+	}
 	if err != nil {
 		platform.WriteError(w, http.StatusInternalServerError, "failed to list referrals")
 		return

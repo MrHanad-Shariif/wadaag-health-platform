@@ -137,3 +137,25 @@ func FromPgDatePtr(d pgtype.Date) *time.Time {
 	}
 	return &d.Time
 }
+
+// PgTimeOfDay converts a time-of-day string in "HH:MM" form (e.g. a
+// provider_availability.start_time/end_time field) to its pgtype.Time wire
+// form, which pgx represents as microseconds since midnight. Returns an
+// error if s isn't valid "HH:MM" text — callers should treat that as a
+// client input error (400), not a server error.
+func PgTimeOfDay(s string) (pgtype.Time, error) {
+	t, err := time.Parse("15:04", s)
+	if err != nil {
+		return pgtype.Time{}, err
+	}
+	micros := (t.Hour()*3600 + t.Minute()*60) * 1_000_000
+	return pgtype.Time{Microseconds: int64(micros), Valid: true}, nil
+}
+
+// FromPgTimeOfDay renders a TIME column back to "HH:MM" form.
+func FromPgTimeOfDay(t pgtype.Time) string {
+	totalSeconds := t.Microseconds / 1_000_000
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	return time.Date(0, 1, 1, int(hours), int(minutes), 0, 0, time.UTC).Format("15:04")
+}

@@ -46,6 +46,46 @@ func (q *Queries) AcceptReferral(ctx context.Context, arg AcceptReferralParams) 
 	return i, err
 }
 
+const countReferralsByReceivingProvider = `-- name: CountReferralsByReceivingProvider :many
+SELECT p.id AS provider_id, u.full_name, count(r.id) AS referral_count
+FROM referrals r
+JOIN providers p ON p.id = r.receiving_provider_id
+JOIN users u ON u.id = p.user_id
+GROUP BY p.id, u.full_name
+ORDER BY referral_count DESC, p.id
+LIMIT $1::int
+`
+
+type CountReferralsByReceivingProviderRow struct {
+	ProviderID    pgtype.UUID `json:"provider_id"`
+	FullName      pgtype.Text `json:"full_name"`
+	ReferralCount int64       `json:"referral_count"`
+}
+
+// Powers the admin dashboard's "most active doctors" panel — ranks
+// providers by how many referrals have been routed to them as the
+// receiving_provider_id (only ever set once a referral has been accepted,
+// see AcceptReferral), across every status, most-referred first.
+func (q *Queries) CountReferralsByReceivingProvider(ctx context.Context, resultLimit int32) ([]CountReferralsByReceivingProviderRow, error) {
+	rows, err := q.db.Query(ctx, countReferralsByReceivingProvider, resultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountReferralsByReceivingProviderRow
+	for rows.Next() {
+		var i CountReferralsByReceivingProviderRow
+		if err := rows.Scan(&i.ProviderID, &i.FullName, &i.ReferralCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countReferralsByStatus = `-- name: CountReferralsByStatus :many
 SELECT status, count(*) AS total FROM referrals GROUP BY status
 `
@@ -73,6 +113,23 @@ func (q *Queries) CountReferralsByStatus(ctx context.Context) ([]CountReferralsB
 		return nil, err
 	}
 	return items, nil
+}
+
+const countReferralsPendingForProvider = `-- name: CountReferralsPendingForProvider :one
+SELECT count(*) FROM referrals
+WHERE receiving_provider_id = $1::uuid
+  AND status IN ('accepted', 'in_progress')
+`
+
+// "Actionable" referrals currently assigned to a provider as the receiving
+// provider: accepted (about to start) or in_progress (already started but
+// not yet completed). Used by the physician-specific dashboard view (see
+// dashboard.Summary.MyReferralsPendingCount).
+func (q *Queries) CountReferralsPendingForProvider(ctx context.Context, providerID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countReferralsPendingForProvider, providerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createReferral = `-- name: CreateReferral :one
@@ -187,6 +244,48 @@ func (q *Queries) FindReferralByID(ctx context.Context, id pgtype.UUID) (Referra
 	return i, err
 }
 
+const listAllReferrals = `-- name: ListAllReferrals :many
+SELECT id, patient_id, referring_provider_id, referring_facility_id, receiving_facility_id, receiving_provider_id, specialty_requested, urgency, status, reason, clinical_summary_encounter_id, version, created_at, updated_at FROM referrals ORDER BY created_at DESC
+`
+
+// Platform-wide oversight listing — system_admin has no facility affiliation
+// of its own to scope ListReferralsForFacility by, so its inbox view needs
+// an unscoped list instead.
+func (q *Queries) ListAllReferrals(ctx context.Context) ([]Referral, error) {
+	rows, err := q.db.Query(ctx, listAllReferrals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Referral
+	for rows.Next() {
+		var i Referral
+		if err := rows.Scan(
+			&i.ID,
+			&i.PatientID,
+			&i.ReferringProviderID,
+			&i.ReferringFacilityID,
+			&i.ReceivingFacilityID,
+			&i.ReceivingProviderID,
+			&i.SpecialtyRequested,
+			&i.Urgency,
+			&i.Status,
+			&i.Reason,
+			&i.ClinicalSummaryEncounterID,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReferralStatusEvents = `-- name: ListReferralStatusEvents :many
 SELECT id, referral_id, from_status, to_status, actor_user_id, note, occurred_at FROM referral_status_events WHERE referral_id = $1 ORDER BY occurred_at
 `
@@ -264,6 +363,107 @@ SELECT id, patient_id, referring_provider_id, referring_facility_id, receiving_f
 
 func (q *Queries) ListReferralsForFacility(ctx context.Context, receivingFacilityID pgtype.UUID) ([]Referral, error) {
 	rows, err := q.db.Query(ctx, listReferralsForFacility, receivingFacilityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Referral
+	for rows.Next() {
+		var i Referral
+		if err := rows.Scan(
+			&i.ID,
+			&i.PatientID,
+			&i.ReferringProviderID,
+			&i.ReferringFacilityID,
+			&i.ReceivingFacilityID,
+			&i.ReceivingProviderID,
+			&i.SpecialtyRequested,
+			&i.Urgency,
+			&i.Status,
+			&i.Reason,
+			&i.ClinicalSummaryEncounterID,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchAllReferrals = `-- name: SearchAllReferrals :many
+SELECT id, patient_id, referring_provider_id, referring_facility_id, receiving_facility_id, receiving_provider_id, specialty_requested, urgency, status, reason, clinical_summary_encounter_id, version, created_at, updated_at FROM referrals
+WHERE reason ILIKE '%' || $1::text || '%'
+ORDER BY similarity(reason, $1::text) DESC, created_at DESC
+LIMIT $2::int
+`
+
+type SearchAllReferralsParams struct {
+	Query       string `json:"query"`
+	ResultLimit int32  `json:"result_limit"`
+}
+
+// Text-filtered variant of ListAllReferrals — system_admin oversight only,
+// same as its unfiltered counterpart.
+func (q *Queries) SearchAllReferrals(ctx context.Context, arg SearchAllReferralsParams) ([]Referral, error) {
+	rows, err := q.db.Query(ctx, searchAllReferrals, arg.Query, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Referral
+	for rows.Next() {
+		var i Referral
+		if err := rows.Scan(
+			&i.ID,
+			&i.PatientID,
+			&i.ReferringProviderID,
+			&i.ReferringFacilityID,
+			&i.ReceivingFacilityID,
+			&i.ReceivingProviderID,
+			&i.SpecialtyRequested,
+			&i.Urgency,
+			&i.Status,
+			&i.Reason,
+			&i.ClinicalSummaryEncounterID,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchReferralsForFacility = `-- name: SearchReferralsForFacility :many
+SELECT id, patient_id, referring_provider_id, referring_facility_id, receiving_facility_id, receiving_provider_id, specialty_requested, urgency, status, reason, clinical_summary_encounter_id, version, created_at, updated_at FROM referrals
+WHERE receiving_facility_id = $1::uuid
+  AND reason ILIKE '%' || $2::text || '%'
+ORDER BY similarity(reason, $2::text) DESC, created_at DESC
+LIMIT $3::int
+`
+
+type SearchReferralsForFacilityParams struct {
+	FacilityID  pgtype.UUID `json:"facility_id"`
+	Query       string      `json:"query"`
+	ResultLimit int32       `json:"result_limit"`
+}
+
+// Text-filtered variant of ListReferralsForFacility — same
+// receiving_facility_id scoping, just with a reason ILIKE filter added, so
+// search never sees referrals outside a facility's existing inbox.
+func (q *Queries) SearchReferralsForFacility(ctx context.Context, arg SearchReferralsForFacilityParams) ([]Referral, error) {
+	rows, err := q.db.Query(ctx, searchReferralsForFacility, arg.FacilityID, arg.Query, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

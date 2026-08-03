@@ -35,6 +35,12 @@ type Facility struct {
 	// nil slice represents NULL (unset).
 	LogoURL      *string
 	WorkingHours []byte
+
+	// ReferralPolicies is free-text describing a facility's referral intake
+	// rules/policies (e.g. what specialties it accepts, hours it reviews
+	// referrals) — plain text rather than structured JSON since this is
+	// meant to be admin-authored prose, not machine-parsed. Nil means unset.
+	ReferralPolicies *string
 }
 
 // Branch is a physical location belonging to a facility (e.g. a hospital's
@@ -88,4 +94,16 @@ type Provider struct {
 	Languages          []string
 	Certificates       []byte
 	AreasOfExpertise   []string
+}
+
+// ProviderSearchResult is a directory-style search hit — a thin projection
+// of Provider plus the linked user's full_name (joined in specifically for
+// search since the base Provider type has no view onto its own user's
+// profile fields). See Service.SearchProviders.
+type ProviderSearchResult struct {
+	ProviderID   uuid.UUID
+	FacilityID   uuid.UUID
+	UserFullName *string
+	Specialty    *string
+	CreatedAt    time.Time
 }

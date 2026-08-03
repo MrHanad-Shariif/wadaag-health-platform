@@ -49,7 +49,7 @@ SELECT count(*) FROM facilities;
 
 -- name: UpdateFacilityLogoAndHours :one
 UPDATE facilities
-SET logo_url = $2, working_hours = $3, updated_at = now()
+SET logo_url = $2, working_hours = $3, referral_policies = $4, updated_at = now()
 WHERE id = $1
 RETURNING *;
 
@@ -92,3 +92,23 @@ RETURNING *;
 
 -- name: DeleteDepartment :exec
 DELETE FROM departments WHERE id = $1;
+
+-- name: SearchFacilities :many
+-- Directory-style search, open to any authenticated user (no sensitive
+-- data on a facility's name/region/district) — see search.Service.Search.
+SELECT * FROM facilities
+WHERE name ILIKE '%' || sqlc.arg(query)::text || '%'
+ORDER BY similarity(name, sqlc.arg(query)::text) DESC, name
+LIMIT sqlc.arg(result_limit)::int;
+
+-- name: SearchProviders :many
+-- Directory-style doctor search by the user's full_name or the provider's
+-- specialty — open to any authenticated user, same reasoning as
+-- SearchFacilities. Joins users only to read full_name; no other
+-- user fields are exposed.
+SELECT p.*, u.full_name AS user_full_name FROM providers p
+JOIN users u ON u.id = p.user_id
+WHERE u.full_name ILIKE '%' || sqlc.arg(query)::text || '%'
+   OR p.specialty ILIKE '%' || sqlc.arg(query)::text || '%'
+ORDER BY similarity(coalesce(u.full_name, ''), sqlc.arg(query)::text) DESC, u.full_name
+LIMIT sqlc.arg(result_limit)::int;

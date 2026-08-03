@@ -63,43 +63,72 @@ type facilityRequest struct {
 }
 
 type facilityResponse struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Type         Type            `json:"type"`
-	Region       *string         `json:"region,omitempty"`
-	District     *string         `json:"district,omitempty"`
-	Phone        *string         `json:"phone,omitempty"`
-	Address      *string         `json:"address,omitempty"`
-	LogoURL      *string         `json:"logo_url,omitempty"`
-	WorkingHours json.RawMessage `json:"working_hours,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Type             Type            `json:"type"`
+	Region           *string         `json:"region,omitempty"`
+	District         *string         `json:"district,omitempty"`
+	Phone            *string         `json:"phone,omitempty"`
+	Address          *string         `json:"address,omitempty"`
+	LogoURL          *string         `json:"logo_url,omitempty"`
+	WorkingHours     json.RawMessage `json:"working_hours,omitempty"`
+	ReferralPolicies *string         `json:"referral_policies,omitempty"`
 }
 
 func toFacilityResponse(f Facility) facilityResponse {
 	return facilityResponse{
-		ID:           f.ID.String(),
-		Name:         f.Name,
-		Type:         f.Type,
-		Region:       f.Region,
-		District:     f.District,
-		Phone:        f.Phone,
-		Address:      f.Address,
-		LogoURL:      f.LogoURL,
-		WorkingHours: f.WorkingHours,
+		ID:               f.ID.String(),
+		Name:             f.Name,
+		Type:             f.Type,
+		Region:           f.Region,
+		District:         f.District,
+		Phone:            f.Phone,
+		Address:          f.Address,
+		LogoURL:          f.LogoURL,
+		WorkingHours:     f.WorkingHours,
+		ReferralPolicies: f.ReferralPolicies,
 	}
 }
 
-// updateFacilityRequest is PATCH /{facilityID}'s body — logo_url and
-// working_hours only, matching Service.UpdateFacilityInput's partial-update
-// contract (a nil/omitted field leaves the current value unchanged).
+// updateFacilityRequest is PATCH /{facilityID}'s body — logo_url,
+// working_hours, and referral_policies, matching
+// Service.UpdateFacilityInput's partial-update contract (a nil/omitted
+// field leaves the current value unchanged).
 type updateFacilityRequest struct {
-	LogoURL      *string         `json:"logo_url"`
-	WorkingHours json.RawMessage `json:"working_hours"`
+	LogoURL          *string         `json:"logo_url"`
+	WorkingHours     json.RawMessage `json:"working_hours"`
+	ReferralPolicies *string         `json:"referral_policies"`
+}
+
+// requireFacilityAccess enforces that a hospital_admin caller may only act
+// on their own affiliated facility (per claims.FacilityID, set at login from
+// the caller's providers row — see identity.Service.issueTokens). A
+// system_admin bypasses this check entirely: they have no claims.FacilityID
+// of their own and legitimately manage every facility. Writes the error
+// response and returns false when access is denied.
+func requireFacilityAccess(w http.ResponseWriter, r *http.Request, targetFacilityID uuid.UUID) bool {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return false
+	}
+	if claims.Role == platform.RoleSystemAdmin {
+		return true
+	}
+	if claims.FacilityID == nil || *claims.FacilityID != targetFacilityID {
+		platform.WriteError(w, http.StatusForbidden, "not affiliated with this facility")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) updateFacility(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "facilityID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid facility id")
+		return
+	}
+	if !requireFacilityAccess(w, r, id) {
 		return
 	}
 
@@ -109,7 +138,7 @@ func (h *Handler) updateFacility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	in := UpdateFacilityInput{LogoURL: req.LogoURL}
+	in := UpdateFacilityInput{LogoURL: req.LogoURL, ReferralPolicies: req.ReferralPolicies}
 	if req.WorkingHours != nil {
 		wh := []byte(req.WorkingHours)
 		in.WorkingHours = &wh
@@ -128,7 +157,21 @@ func (h *Handler) updateFacility(w http.ResponseWriter, r *http.Request) {
 	platform.WriteJSON(w, http.StatusOK, toFacilityResponse(facility))
 }
 
+// create is restricted to system_admin even though the group middleware
+// also admits hospital_admin: a hospital_admin has (at most) one facility
+// they're affiliated with, and creating a new facility isn't an action on
+// that facility — onboarding a new hospital is a platform-level action.
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return
+	}
+	if claims.Role != platform.RoleSystemAdmin {
+		platform.WriteError(w, http.StatusForbidden, "only system admins can create facilities")
+		return
+	}
+
 	var req facilityRequest
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -222,6 +265,9 @@ func (h *Handler) addProvider(w http.ResponseWriter, r *http.Request) {
 	facilityID, err := uuid.Parse(chi.URLParam(r, "facilityID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid facility id")
+		return
+	}
+	if !requireFacilityAccess(w, r, facilityID) {
 		return
 	}
 
@@ -363,11 +409,26 @@ type updateProviderVerificationStatusRequest struct {
 // updateProviderVerificationStatus is the admin-only counterpart to
 // updateOwnProviderProfile — gated by the same
 // platform.RequireRoles(RoleSystemAdmin, RoleHospitalAdmin) group as every
-// other admin route in this handler (addProvider, updateFacility, etc.).
+// other admin route in this handler (addProvider, updateFacility, etc.),
+// plus requireFacilityAccess scoping a hospital_admin to the target
+// provider's own facility.
 func (h *Handler) updateProviderVerificationStatus(w http.ResponseWriter, r *http.Request) {
 	providerID, err := uuid.Parse(chi.URLParam(r, "providerID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid provider id")
+		return
+	}
+
+	target, err := h.service.GetProvider(r.Context(), providerID)
+	if err != nil {
+		if errors.Is(err, ErrProviderNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "provider not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load provider")
+		return
+	}
+	if !requireFacilityAccess(w, r, target.FacilityID) {
 		return
 	}
 
@@ -415,6 +476,9 @@ func (h *Handler) createBranch(w http.ResponseWriter, r *http.Request) {
 	facilityID, err := uuid.Parse(chi.URLParam(r, "facilityID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid facility id")
+		return
+	}
+	if !requireFacilityAccess(w, r, facilityID) {
 		return
 	}
 
@@ -466,6 +530,19 @@ func (h *Handler) updateBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := h.service.GetBranch(r.Context(), branchID)
+	if err != nil {
+		if errors.Is(err, ErrBranchNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "branch not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load branch")
+		return
+	}
+	if !requireFacilityAccess(w, r, existing.FacilityID) {
+		return
+	}
+
 	var req branchRequest
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -491,6 +568,19 @@ func (h *Handler) deleteBranch(w http.ResponseWriter, r *http.Request) {
 	branchID, err := uuid.Parse(chi.URLParam(r, "branchID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid branch id")
+		return
+	}
+
+	existing, err := h.service.GetBranch(r.Context(), branchID)
+	if err != nil {
+		if errors.Is(err, ErrBranchNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "branch not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load branch")
+		return
+	}
+	if !requireFacilityAccess(w, r, existing.FacilityID) {
 		return
 	}
 
@@ -520,6 +610,9 @@ func (h *Handler) createDepartment(w http.ResponseWriter, r *http.Request) {
 	facilityID, err := uuid.Parse(chi.URLParam(r, "facilityID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid facility id")
+		return
+	}
+	if !requireFacilityAccess(w, r, facilityID) {
 		return
 	}
 
@@ -571,6 +664,19 @@ func (h *Handler) updateDepartment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := h.service.GetDepartment(r.Context(), departmentID)
+	if err != nil {
+		if errors.Is(err, ErrDepartmentNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "department not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load department")
+		return
+	}
+	if !requireFacilityAccess(w, r, existing.FacilityID) {
+		return
+	}
+
 	var req departmentRequest
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -594,6 +700,19 @@ func (h *Handler) deleteDepartment(w http.ResponseWriter, r *http.Request) {
 	departmentID, err := uuid.Parse(chi.URLParam(r, "departmentID"))
 	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid department id")
+		return
+	}
+
+	existing, err := h.service.GetDepartment(r.Context(), departmentID)
+	if err != nil {
+		if errors.Is(err, ErrDepartmentNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "department not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load department")
+		return
+	}
+	if !requireFacilityAccess(w, r, existing.FacilityID) {
 		return
 	}
 

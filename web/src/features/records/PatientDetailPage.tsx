@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Send } from 'lucide-react'
+import { Send, Stethoscope } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
@@ -19,6 +19,7 @@ import type { Encounter, EncounterType, UpdateMedicalHistoryInput } from './type
 import { listForPatient } from '../referrals/api'
 import { formatStatus } from '../referrals/format'
 import type { Referral } from '../referrals/types'
+import { AttachmentsSection } from '../attachments/AttachmentsSection'
 
 type MedicalHistoryArrayField = keyof UpdateMedicalHistoryInput
 
@@ -105,10 +106,16 @@ export function PatientDetailPage() {
         title={patient.full_name}
         actions={
           isProvider ? (
-            <Link className="button-link" to={`/referrals/new?patient=${patient.id}`}>
-              <Send size={16} aria-hidden="true" />
-              Refer this patient
-            </Link>
+            <>
+              <Link className="button-link" to={`/referrals/new?patient=${patient.id}`}>
+                <Send size={16} aria-hidden="true" />
+                Refer this patient
+              </Link>
+              <Link className="button-link" to={`/consults/new?patient=${patient.id}`}>
+                <Stethoscope size={16} aria-hidden="true" />
+                Request consult
+              </Link>
+            </>
           ) : undefined
         }
       />
@@ -218,6 +225,8 @@ export function PatientDetailPage() {
       </section>
 
       <MedicalHistorySection patientId={patientId!} isProvider={isProvider} />
+
+      <AttachmentsSection patientId={patientId!} isProvider={isProvider} />
     </div>
   )
 }

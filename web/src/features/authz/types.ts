@@ -37,9 +37,24 @@ export interface CreateUserInput {
   email?: string
   phone?: string
   password: string
+  full_name?: string
   legacy_role: LegacyRole
   role_id?: string
   facility_id?: string
   specialty?: string
   license_number?: string
+}
+
+// system_admin-only platform toggles — see GET/PATCH
+// /api/v1/authz/feature-flags in backend/internal/authz/handler.go.
+export interface FeatureFlag {
+  key: string
+  enabled: boolean
+  description?: string
+  updated_at: string
+}
+
+export interface SetFeatureFlagInput {
+  enabled: boolean
+  description?: string
 }

@@ -27,12 +27,13 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{q: sqlcgen.New(db)}
 }
 
-func (r *Repository) CreateUser(ctx context.Context, email, phone *string, passwordHash string, role platform.Role) (User, error) {
+func (r *Repository) CreateUser(ctx context.Context, email, phone *string, passwordHash string, role platform.Role, fullName *string) (User, error) {
 	row, err := r.q.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Email:        platform.PgText(email),
 		Phone:        platform.PgText(phone),
 		PasswordHash: passwordHash,
 		Role:         sqlcgen.UserRole(role),
+		FullName:     platform.PgText(fullName),
 	})
 	if err != nil {
 		if platform.IsUniqueViolation(err) {
@@ -237,7 +238,9 @@ func (r *Repository) MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUI
 }
 
 // UpdateUserPasswordHash overwrites userID's stored password hash — used by
-// the reset-password flow after the presented token has been validated.
+// the reset-password flow after the presented token has been validated,
+// and by Service.ChangePassword's self-service counterpart after the
+// caller has proven they know their current password.
 func (r *Repository) UpdateUserPasswordHash(ctx context.Context, userID uuid.UUID, passwordHash string) error {
 	if err := r.q.UpdateUserPasswordHash(ctx, sqlcgen.UpdateUserPasswordHashParams{
 		ID:           platform.PgUUID(userID),
@@ -246,6 +249,23 @@ func (r *Repository) UpdateUserPasswordHash(ctx context.Context, userID uuid.UUI
 		return fmt.Errorf("update user password hash: %w", err)
 	}
 	return nil
+}
+
+// UpdateFullName overwrites userID's stored display name, returning the
+// updated row.
+func (r *Repository) UpdateFullName(ctx context.Context, userID uuid.UUID, fullName string) (User, error) {
+	name := fullName
+	row, err := r.q.UpdateUserFullName(ctx, sqlcgen.UpdateUserFullNameParams{
+		ID:       platform.PgUUID(userID),
+		FullName: platform.PgText(&name),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("update user full name: %w", err)
+	}
+	return fromRow(row), nil
 }
 
 func fromEmailVerificationTokenRow(row sqlcgen.EmailVerificationToken) EmailVerificationToken {
@@ -295,5 +315,6 @@ func fromRow(row sqlcgen.User) User {
 		CreatedAt:    row.CreatedAt.Time,
 		UpdatedAt:    row.UpdatedAt.Time,
 		VerifiedAt:   platform.FromPgTimestamptzPtr(row.VerifiedAt),
+		FullName:     platform.FromPgText(row.FullName),
 	}
 }

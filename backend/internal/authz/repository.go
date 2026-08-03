@@ -160,6 +160,7 @@ func (r *Repository) ListUsers(ctx context.Context) ([]User, error) {
 			ID: platform.FromPgUUID(row.ID), Email: platform.FromPgText(row.Email), Phone: platform.FromPgText(row.Phone),
 			LegacyRole: platform.Role(row.Role), Status: row.Status, CreatedAt: row.CreatedAt.Time,
 			RoleID: platform.FromPgUUIDPtr(row.RoleID), RoleName: platform.FromPgText(row.RoleName),
+			FullName: platform.FromPgText(row.FullName),
 		}
 	}
 	return users, nil
@@ -177,6 +178,7 @@ func (r *Repository) FindUserByID(ctx context.Context, id uuid.UUID) (User, erro
 		ID: platform.FromPgUUID(row.ID), Email: platform.FromPgText(row.Email), Phone: platform.FromPgText(row.Phone),
 		LegacyRole: platform.Role(row.Role), Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		RoleID: platform.FromPgUUIDPtr(row.RoleID), RoleName: platform.FromPgText(row.RoleName),
+		FullName: platform.FromPgText(row.FullName),
 	}, nil
 }
 
@@ -204,6 +206,39 @@ func (r *Repository) CountUsers(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("count users: %w", err)
 	}
 	return count, nil
+}
+
+// ListFeatureFlags returns every feature flag row, alphabetical by key.
+func (r *Repository) ListFeatureFlags(ctx context.Context) ([]FeatureFlag, error) {
+	rows, err := r.q.ListFeatureFlags(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list feature flags: %w", err)
+	}
+	flags := make([]FeatureFlag, len(rows))
+	for i, row := range rows {
+		flags[i] = featureFlagFromRow(row)
+	}
+	return flags, nil
+}
+
+// UpsertFeatureFlag creates or updates the flag identified by key —
+// updating enabled unconditionally, and description only if a non-nil
+// value is supplied (so a PATCH that only sends {"enabled": true} doesn't
+// clear a description set earlier).
+func (r *Repository) UpsertFeatureFlag(ctx context.Context, key string, enabled bool, description *string) (FeatureFlag, error) {
+	row, err := r.q.UpsertFeatureFlag(ctx, sqlcgen.UpsertFeatureFlagParams{
+		Key: key, Enabled: enabled, Description: platform.PgText(description),
+	})
+	if err != nil {
+		return FeatureFlag{}, fmt.Errorf("upsert feature flag: %w", err)
+	}
+	return featureFlagFromRow(row), nil
+}
+
+func featureFlagFromRow(row sqlcgen.FeatureFlag) FeatureFlag {
+	return FeatureFlag{
+		Key: row.Key, Enabled: row.Enabled, Description: platform.FromPgText(row.Description), UpdatedAt: row.UpdatedAt.Time,
+	}
 }
 
 func roleFromRow(row sqlcgen.Role) Role {

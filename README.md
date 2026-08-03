@@ -47,3 +47,14 @@ New/changed migrations aren't picked up by an already-running stack — run `doc
 ## Status
 
 MVP-first build: Digital Referrals, Unified Health Records, Consent & Privacy Controls, and Notifications are the core loop being built now. Telemedicine, Cross-Specialty Consults, Lab Integration, Pharmacy Integration, the offline-first mobile app, and Insurance Readiness are staged in afterward — see the module list under `backend/internal/` for the stubbed domains already reserving their place in the architecture.
+
+## Production readiness — not yet done, tracked here so it isn't forgotten
+
+`deploy/docker-compose.yml` is dev-only (hot-reloading dev servers, a hardcoded insecure `JWT_SECRET`/`ENCRYPTION_KEY` dev default, no TLS). Before any real deployment, the following need to happen — from the roadmap's Phase 10 security-hardening pass (`docs/plans/full-feature-roadmap.md`):
+
+- **HTTPS/TLS termination**: nothing in this repo terminates TLS today. Production needs a reverse proxy (Caddy, nginx, or a cloud load balancer) in front of the `backend`/`web` containers handling certificate provisioning and forcing HTTPS — not yet built here; add it as part of standing up the actual production environment, once a real domain/host is chosen.
+- **Database encryption at rest**: two layers —
+  1. Volume/disk-level encryption is expected to come from whatever managed Postgres hosting is chosen (DigitalOcean Managed Databases, AWS RDS, etc. — these encrypt at rest by default with no application change needed). Pick a host that provides this; don't run production Postgres on an unencrypted raw disk.
+  2. Column-level encryption for the most sensitive fields (`patients.national_id`, `patient_medical_history`'s six jsonb columns) is implemented at the application layer via `pgcrypto` — see migration `0024_encrypt_sensitive_columns` and `ENCRYPTION_KEY` in `platform.Config`. **`ENCRYPTION_KEY` must be set to a real, securely-generated secret outside development** (same requirement as `JWT_SECRET`) — losing or rotating it without a re-encryption migration makes the encrypted data unrecoverable. Note the accepted tradeoff: patient search by `national_id` no longer works (encrypted values can't support partial-text match) — search by name/phone still does.
+- **File-scanning on upload**: deliberately not implemented. Attachments (Phase 3, `internal/attachments`) accept files from authenticated users with no malware/content scanning. Before real patient documents flow through this in production, add a scan step in `attachments.Service.Upload` — either a self-hosted ClamAV container (no vendor account needed) or a hosted scanning API (needs an account + credentials, a product-owner decision when the time comes).
+- **RBAC audit**: a review pass against every endpoint built across Phases 0-9 was done as part of Phase 10 — see that review's findings for anything that needs following up before production.

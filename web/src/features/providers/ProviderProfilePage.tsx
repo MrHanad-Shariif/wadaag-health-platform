@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
@@ -47,6 +47,19 @@ export function ProviderProfilePage() {
         eyebrow="Provider"
         title={selfMode ? 'My provider profile' : 'Provider profile'}
         description={provider.specialty ?? undefined}
+        actions={
+          selfMode ? (
+            user?.role === 'physician' ? (
+              <Link to="/appointments/availability" className="button-link">
+                Manage weekly availability
+              </Link>
+            ) : undefined
+          ) : (
+            <Link to={`/appointments/book?provider=${provider.id}&facility=${provider.facility_id}`} className="button-link">
+              Book appointment
+            </Link>
+          )
+        }
       />
 
       <dl className="detail-grid">

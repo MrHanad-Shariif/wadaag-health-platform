@@ -75,17 +75,19 @@ func (r *Repository) FindFacilityByID(ctx context.Context, id uuid.UUID) (Facili
 	return facilityFromRow(row), nil
 }
 
-// UpdateFacilityLogoAndHours overwrites logo_url and working_hours with
-// exactly the values given. It does not itself implement partial-update
-// (merge) semantics — see Service.UpdateFacility, which reads the current
-// facility, overlays only the fields the caller supplied, and passes the
-// fully-resolved result here, following the same read-then-merge-then-write
-// pattern as identity.Service.UpdateProfile / mergeProfileUpdate.
-func (r *Repository) UpdateFacilityLogoAndHours(ctx context.Context, id uuid.UUID, logoURL *string, workingHours []byte) (Facility, error) {
+// UpdateFacilityLogoAndHours overwrites logo_url, working_hours, and
+// referral_policies with exactly the values given. It does not itself
+// implement partial-update (merge) semantics — see Service.UpdateFacility,
+// which reads the current facility, overlays only the fields the caller
+// supplied, and passes the fully-resolved result here, following the same
+// read-then-merge-then-write pattern as identity.Service.UpdateProfile /
+// mergeProfileUpdate.
+func (r *Repository) UpdateFacilityLogoAndHours(ctx context.Context, id uuid.UUID, logoURL *string, workingHours []byte, referralPolicies *string) (Facility, error) {
 	row, err := r.q.UpdateFacilityLogoAndHours(ctx, sqlcgen.UpdateFacilityLogoAndHoursParams{
-		ID:           platform.PgUUID(id),
-		LogoUrl:      platform.PgText(logoURL),
-		WorkingHours: workingHours,
+		ID:               platform.PgUUID(id),
+		LogoUrl:          platform.PgText(logoURL),
+		WorkingHours:     workingHours,
+		ReferralPolicies: platform.PgText(referralPolicies),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Facility{}, ErrFacilityNotFound
@@ -303,19 +305,60 @@ func (r *Repository) DeleteDepartment(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SearchFacilities is a directory-style search by facility name — open to
+// any authenticated user, no consent scoping needed (see
+// search.Service.Search).
+func (r *Repository) SearchFacilities(ctx context.Context, query string, limit int) ([]Facility, error) {
+	rows, err := r.q.SearchFacilities(ctx, sqlcgen.SearchFacilitiesParams{
+		Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search facilities: %w", err)
+	}
+	out := make([]Facility, len(rows))
+	for i, row := range rows {
+		out[i] = facilityFromRow(row)
+	}
+	return out, nil
+}
+
+// SearchProviders is a directory-style search by the provider's linked
+// user's full_name or specialty — open to any authenticated user, same
+// reasoning as SearchFacilities.
+func (r *Repository) SearchProviders(ctx context.Context, query string, limit int) ([]ProviderSearchResult, error) {
+	rows, err := r.q.SearchProviders(ctx, sqlcgen.SearchProvidersParams{
+		Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search providers: %w", err)
+	}
+	out := make([]ProviderSearchResult, len(rows))
+	for i, row := range rows {
+		out[i] = ProviderSearchResult{
+			ProviderID:   platform.FromPgUUID(row.ID),
+			FacilityID:   platform.FromPgUUID(row.FacilityID),
+			UserFullName: platform.FromPgText(row.UserFullName),
+			Specialty:    platform.FromPgText(row.Specialty),
+			CreatedAt:    row.CreatedAt.Time,
+		}
+	}
+	return out, nil
+}
+
 func facilityFromRow(row sqlcgen.Facility) Facility {
 	return Facility{
-		ID:           platform.FromPgUUID(row.ID),
-		Name:         row.Name,
-		Type:         Type(row.Type),
-		Region:       platform.FromPgText(row.Region),
-		District:     platform.FromPgText(row.District),
-		Phone:        platform.FromPgText(row.Phone),
-		Address:      platform.FromPgText(row.Address),
-		CreatedAt:    row.CreatedAt.Time,
-		UpdatedAt:    row.UpdatedAt.Time,
-		LogoURL:      platform.FromPgText(row.LogoUrl),
-		WorkingHours: row.WorkingHours,
+		ID:               platform.FromPgUUID(row.ID),
+		Name:             row.Name,
+		Type:             Type(row.Type),
+		Region:           platform.FromPgText(row.Region),
+		District:         platform.FromPgText(row.District),
+		Phone:            platform.FromPgText(row.Phone),
+		Address:          platform.FromPgText(row.Address),
+		CreatedAt:        row.CreatedAt.Time,
+		UpdatedAt:        row.UpdatedAt.Time,
+		LogoURL:          platform.FromPgText(row.LogoUrl),
+		WorkingHours:     row.WorkingHours,
+		ReferralPolicies: platform.FromPgText(row.ReferralPolicies),
 	}
 }
 

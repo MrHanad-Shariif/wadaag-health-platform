@@ -82,6 +82,38 @@ func (r *Repository) ListForFacility(ctx context.Context, facilityID uuid.UUID) 
 	return fromRows(rows), nil
 }
 
+func (r *Repository) ListAll(ctx context.Context) ([]Referral, error) {
+	rows, err := r.q.ListAllReferrals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list all referrals: %w", err)
+	}
+	return fromRows(rows), nil
+}
+
+// SearchForFacility is SearchAll's facility-scoped counterpart — see
+// ListForFacility, which shares the same receiving_facility_id boundary.
+func (r *Repository) SearchForFacility(ctx context.Context, facilityID uuid.UUID, query string, limit int) ([]Referral, error) {
+	rows, err := r.q.SearchReferralsForFacility(ctx, sqlcgen.SearchReferralsForFacilityParams{
+		FacilityID: platform.PgUUID(facilityID), Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search referrals for facility: %w", err)
+	}
+	return fromRows(rows), nil
+}
+
+// SearchAll is ListAll's text-filtered counterpart — system_admin oversight
+// only, same as its unfiltered sibling.
+func (r *Repository) SearchAll(ctx context.Context, query string, limit int) ([]Referral, error) {
+	rows, err := r.q.SearchAllReferrals(ctx, sqlcgen.SearchAllReferralsParams{
+		Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search all referrals: %w", err)
+	}
+	return fromRows(rows), nil
+}
+
 func (r *Repository) ListForPatient(ctx context.Context, patientID uuid.UUID) ([]Referral, error) {
 	rows, err := r.q.ListReferralsByPatient(ctx, platform.PgUUID(patientID))
 	if err != nil {
@@ -130,6 +162,33 @@ func (r *Repository) CreateStatusEvent(ctx context.Context, referralID uuid.UUID
 		return fmt.Errorf("insert referral status event: %w", err)
 	}
 	return nil
+}
+
+// CountReferralsByReceivingProvider is the admin dashboard's "most active
+// doctors" query — see ProviderReferralActivity's doc comment.
+func (r *Repository) CountReferralsByReceivingProvider(ctx context.Context, limit int) ([]ProviderReferralActivity, error) {
+	rows, err := r.q.CountReferralsByReceivingProvider(ctx, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("count referrals by receiving provider: %w", err)
+	}
+	out := make([]ProviderReferralActivity, len(rows))
+	for i, row := range rows {
+		out[i] = ProviderReferralActivity{
+			ProviderID: platform.FromPgUUID(row.ProviderID), FullName: platform.FromPgText(row.FullName), ReferralCount: row.ReferralCount,
+		}
+	}
+	return out, nil
+}
+
+// CountPendingForProvider is the physician-specific dashboard view's
+// "my referrals pending" count — see the CountReferralsPendingForProvider
+// query doc comment for the exact status set considered "actionable".
+func (r *Repository) CountPendingForProvider(ctx context.Context, providerID uuid.UUID) (int64, error) {
+	count, err := r.q.CountReferralsPendingForProvider(ctx, platform.PgUUID(providerID))
+	if err != nil {
+		return 0, fmt.Errorf("count pending referrals for provider: %w", err)
+	}
+	return count, nil
 }
 
 func (r *Repository) ListStatusEvents(ctx context.Context, referralID uuid.UUID) ([]StatusEvent, error) {

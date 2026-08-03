@@ -82,7 +82,7 @@ func (q *Queries) CreateDepartment(ctx context.Context, arg CreateDepartmentPara
 const createFacility = `-- name: CreateFacility :one
 INSERT INTO facilities (name, type, region, district, phone, address)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours
+RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours, referral_policies
 `
 
 type CreateFacilityParams struct {
@@ -116,6 +116,7 @@ func (q *Queries) CreateFacility(ctx context.Context, arg CreateFacilityParams) 
 		&i.UpdatedAt,
 		&i.LogoUrl,
 		&i.WorkingHours,
+		&i.ReferralPolicies,
 	)
 	return i, err
 }
@@ -215,7 +216,7 @@ func (q *Queries) FindDepartmentByID(ctx context.Context, id pgtype.UUID) (Depar
 }
 
 const findFacilityByID = `-- name: FindFacilityByID :one
-SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours FROM facilities WHERE id = $1
+SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours, referral_policies FROM facilities WHERE id = $1
 `
 
 func (q *Queries) FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facility, error) {
@@ -233,6 +234,7 @@ func (q *Queries) FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facilit
 		&i.UpdatedAt,
 		&i.LogoUrl,
 		&i.WorkingHours,
+		&i.ReferralPolicies,
 	)
 	return i, err
 }
@@ -352,7 +354,7 @@ func (q *Queries) ListDepartmentsByFacility(ctx context.Context, facilityID pgty
 }
 
 const listFacilities = `-- name: ListFacilities :many
-SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours FROM facilities ORDER BY name
+SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours, referral_policies FROM facilities ORDER BY name
 `
 
 func (q *Queries) ListFacilities(ctx context.Context) ([]Facility, error) {
@@ -376,6 +378,126 @@ func (q *Queries) ListFacilities(ctx context.Context) ([]Facility, error) {
 			&i.UpdatedAt,
 			&i.LogoUrl,
 			&i.WorkingHours,
+			&i.ReferralPolicies,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchFacilities = `-- name: SearchFacilities :many
+SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours, referral_policies FROM facilities
+WHERE name ILIKE '%' || $1::text || '%'
+ORDER BY similarity(name, $1::text) DESC, name
+LIMIT $2::int
+`
+
+type SearchFacilitiesParams struct {
+	Query       string `json:"query"`
+	ResultLimit int32  `json:"result_limit"`
+}
+
+// Directory-style search, open to any authenticated user (no sensitive
+// data on a facility's name/region/district) — see search.Service.Search.
+func (q *Queries) SearchFacilities(ctx context.Context, arg SearchFacilitiesParams) ([]Facility, error) {
+	rows, err := q.db.Query(ctx, searchFacilities, arg.Query, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Facility
+	for rows.Next() {
+		var i Facility
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Type,
+			&i.Region,
+			&i.District,
+			&i.Phone,
+			&i.Address,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LogoUrl,
+			&i.WorkingHours,
+			&i.ReferralPolicies,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchProviders = `-- name: SearchProviders :many
+SELECT p.id, p.user_id, p.facility_id, p.specialty, p.license_number, p.created_at, p.updated_at, p.qualifications, p.years_experience, p.consultation_fee, p.verification_status, p.languages, p.certificates, p.areas_of_expertise, u.full_name AS user_full_name FROM providers p
+JOIN users u ON u.id = p.user_id
+WHERE u.full_name ILIKE '%' || $1::text || '%'
+   OR p.specialty ILIKE '%' || $1::text || '%'
+ORDER BY similarity(coalesce(u.full_name, ''), $1::text) DESC, u.full_name
+LIMIT $2::int
+`
+
+type SearchProvidersParams struct {
+	Query       string `json:"query"`
+	ResultLimit int32  `json:"result_limit"`
+}
+
+type SearchProvidersRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	FacilityID         pgtype.UUID        `json:"facility_id"`
+	Specialty          pgtype.Text        `json:"specialty"`
+	LicenseNumber      pgtype.Text        `json:"license_number"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	Qualifications     []string           `json:"qualifications"`
+	YearsExperience    pgtype.Int4        `json:"years_experience"`
+	ConsultationFee    pgtype.Numeric     `json:"consultation_fee"`
+	VerificationStatus string             `json:"verification_status"`
+	Languages          []string           `json:"languages"`
+	Certificates       []byte             `json:"certificates"`
+	AreasOfExpertise   []string           `json:"areas_of_expertise"`
+	UserFullName       pgtype.Text        `json:"user_full_name"`
+}
+
+// Directory-style doctor search by the user's full_name or the provider's
+// specialty — open to any authenticated user, same reasoning as
+// SearchFacilities. Joins users only to read full_name; no other
+// user fields are exposed.
+func (q *Queries) SearchProviders(ctx context.Context, arg SearchProvidersParams) ([]SearchProvidersRow, error) {
+	rows, err := q.db.Query(ctx, searchProviders, arg.Query, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchProvidersRow
+	for rows.Next() {
+		var i SearchProvidersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FacilityID,
+			&i.Specialty,
+			&i.LicenseNumber,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Qualifications,
+			&i.YearsExperience,
+			&i.ConsultationFee,
+			&i.VerificationStatus,
+			&i.Languages,
+			&i.Certificates,
+			&i.AreasOfExpertise,
+			&i.UserFullName,
 		); err != nil {
 			return nil, err
 		}
@@ -448,19 +570,25 @@ func (q *Queries) UpdateDepartment(ctx context.Context, arg UpdateDepartmentPara
 
 const updateFacilityLogoAndHours = `-- name: UpdateFacilityLogoAndHours :one
 UPDATE facilities
-SET logo_url = $2, working_hours = $3, updated_at = now()
+SET logo_url = $2, working_hours = $3, referral_policies = $4, updated_at = now()
 WHERE id = $1
-RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours
+RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours, referral_policies
 `
 
 type UpdateFacilityLogoAndHoursParams struct {
-	ID           pgtype.UUID `json:"id"`
-	LogoUrl      pgtype.Text `json:"logo_url"`
-	WorkingHours []byte      `json:"working_hours"`
+	ID               pgtype.UUID `json:"id"`
+	LogoUrl          pgtype.Text `json:"logo_url"`
+	WorkingHours     []byte      `json:"working_hours"`
+	ReferralPolicies pgtype.Text `json:"referral_policies"`
 }
 
 func (q *Queries) UpdateFacilityLogoAndHours(ctx context.Context, arg UpdateFacilityLogoAndHoursParams) (Facility, error) {
-	row := q.db.QueryRow(ctx, updateFacilityLogoAndHours, arg.ID, arg.LogoUrl, arg.WorkingHours)
+	row := q.db.QueryRow(ctx, updateFacilityLogoAndHours,
+		arg.ID,
+		arg.LogoUrl,
+		arg.WorkingHours,
+		arg.ReferralPolicies,
+	)
 	var i Facility
 	err := row.Scan(
 		&i.ID,
@@ -474,6 +602,7 @@ func (q *Queries) UpdateFacilityLogoAndHours(ctx context.Context, arg UpdateFaci
 		&i.UpdatedAt,
 		&i.LogoUrl,
 		&i.WorkingHours,
+		&i.ReferralPolicies,
 	)
 	return i, err
 }

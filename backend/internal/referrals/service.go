@@ -3,16 +3,35 @@ package referrals
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wadaag/health-platform/backend/internal/consent"
+	"github.com/wadaag/health-platform/backend/internal/facilities"
 )
 
 // ProviderResolver maps the calling user to their provider identity.
 // Implemented by facilities.Service, wired in main.go.
 type ProviderResolver interface {
 	ResolveProviderID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+}
+
+// ProviderLookup resolves a provider profile (including its user_id) by
+// provider id — the reverse direction of ProviderResolver. Needed to notify
+// the referring provider's user account on a status change. Optional (nil by
+// default, see Service.providers); set via SetProviderLookup. Satisfied by
+// *facilities.Service.
+type ProviderLookup interface {
+	GetProvider(ctx context.Context, id uuid.UUID) (facilities.Provider, error)
+}
+
+// NotificationPublisher is the narrow surface this package needs from
+// notifications.Service, defined locally so referrals doesn't import that
+// package directly. Optional (nil by default); set via
+// SetNotificationPublisher. Satisfied by *notifications.Service.
+type NotificationPublisher interface {
+	Publish(ctx context.Context, userID uuid.UUID, notifType string, payload map[string]any) error
 }
 
 // consentGrants is the narrow slice of consent.Checker this service needs —
@@ -32,10 +51,49 @@ type Service struct {
 	repo     *Repository
 	consent  consentGrants
 	provider ProviderResolver
+
+	// providers and notify are optional (nil by default) — set via
+	// SetProviderLookup / SetNotificationPublisher in main.go. Nil-tolerant
+	// everywhere they're used, so existing construction paths and any future
+	// tests that build a Service without wiring them keep working unchanged.
+	providers ProviderLookup
+	notify    NotificationPublisher
 }
 
 func NewService(repo *Repository, consentGranter consentGrants, provider ProviderResolver) *Service {
 	return &Service{repo: repo, consent: consentGranter, provider: provider}
+}
+
+// SetProviderLookup wires the provider-lookup dependency used to resolve the
+// referring provider's user_id for notifications. Nil-safe: if never called,
+// notifyReferringProvider silently skips.
+func (s *Service) SetProviderLookup(p ProviderLookup) { s.providers = p }
+
+// SetNotificationPublisher wires the optional in-app notification publisher.
+// Nil-safe: if never called, notifyReferringProvider silently skips.
+func (s *Service) SetNotificationPublisher(p NotificationPublisher) { s.notify = p }
+
+// notifyReferringProvider publishes a "referral_status_changed" notification
+// to the referring provider's user account, if both the provider-lookup and
+// notification-publisher dependencies are wired. Never returns an error to
+// the caller — a failed or skipped notification must never block the status
+// transition it's describing (same "log loudly, don't fail the primary
+// operation" philosophy as audit.Logger.Record).
+func (s *Service) notifyReferringProvider(ctx context.Context, referral Referral) {
+	if s.notify == nil || s.providers == nil {
+		return
+	}
+	provider, err := s.providers.GetProvider(ctx, referral.ReferringProviderID)
+	if err != nil {
+		slog.Error("failed to resolve referring provider for notification", "error", err, "referral_id", referral.ID)
+		return
+	}
+	err = s.notify.Publish(ctx, provider.UserID, "referral_status_changed", map[string]any{
+		"referral_id": referral.ID.String(), "status": string(referral.Status),
+	})
+	if err != nil {
+		slog.Error("failed to publish referral status notification", "error", err, "referral_id", referral.ID)
+	}
 }
 
 type CreateReferralInput struct {
@@ -96,12 +154,47 @@ func (s *Service) ListForFacility(ctx context.Context, facilityID uuid.UUID) ([]
 	return s.repo.ListForFacility(ctx, facilityID)
 }
 
+// ListAll is the system_admin oversight path — a platform administrator has
+// no facility affiliation of their own to scope ListForFacility by, so this
+// returns every referral instead. Restricting who may call this is the
+// handler's job (see Handler.inbox).
+func (s *Service) ListAll(ctx context.Context) ([]Referral, error) {
+	return s.repo.ListAll(ctx)
+}
+
+// SearchForFacility is ListForFacility's text-filtered counterpart, reusing
+// the exact same receiving-facility scoping — see search.Service.Search.
+func (s *Service) SearchForFacility(ctx context.Context, facilityID uuid.UUID, query string, limit int) ([]Referral, error) {
+	return s.repo.SearchForFacility(ctx, facilityID, query, limit)
+}
+
+// SearchAll is ListAll's text-filtered counterpart — system_admin oversight
+// path only, restricting who may call it is the caller's job (see
+// search.Service.Search).
+func (s *Service) SearchAll(ctx context.Context, query string, limit int) ([]Referral, error) {
+	return s.repo.SearchAll(ctx, query, limit)
+}
+
 func (s *Service) ListForPatient(ctx context.Context, patientID uuid.UUID) ([]Referral, error) {
 	return s.repo.ListForPatient(ctx, patientID)
 }
 
 func (s *Service) ListStatusEvents(ctx context.Context, referralID uuid.UUID) ([]StatusEvent, error) {
 	return s.repo.ListStatusEvents(ctx, referralID)
+}
+
+// MostActiveDoctors implements a narrow slice of dashboard.DoctorActivityCounter
+// (via main.go's adapter — see ProviderReferralActivity) — the top `limit`
+// providers by how many referrals they've received, most-referred first.
+func (s *Service) MostActiveDoctors(ctx context.Context, limit int) ([]ProviderReferralActivity, error) {
+	return s.repo.CountReferralsByReceivingProvider(ctx, limit)
+}
+
+// CountPendingReferralsForProvider implements dashboard.ReferralPendingCounter
+// — how many referrals are currently assigned to providerID as the
+// receiving provider and still need action (accepted or in_progress).
+func (s *Service) CountPendingReferralsForProvider(ctx context.Context, providerID uuid.UUID) (int64, error) {
+	return s.repo.CountPendingForProvider(ctx, providerID)
 }
 
 var ErrNotReceivingFacility = fmt.Errorf("only the receiving facility can perform this action")
@@ -163,6 +256,7 @@ func (s *Service) Transition(ctx context.Context, actorUserID, actorFacilityID, 
 
 	from := t.AllowedFrom
 	_ = s.repo.CreateStatusEvent(ctx, referralID, &from, t.To, actorUserID, note)
+	s.notifyReferringProvider(ctx, updated)
 	return updated, nil
 }
 
@@ -196,5 +290,6 @@ func (s *Service) Cancel(ctx context.Context, actorUserID, actorFacilityID, refe
 
 	from := current.Status
 	_ = s.repo.CreateStatusEvent(ctx, referralID, &from, StatusCancelled, actorUserID, note)
+	s.notifyReferringProvider(ctx, updated)
 	return updated, nil
 }

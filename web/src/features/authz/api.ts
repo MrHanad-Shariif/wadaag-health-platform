@@ -1,5 +1,5 @@
 import { apiClient } from '../../api/client'
-import type { AuthzRole, AuthzUser, CreateUserInput, Permission, RoleInput } from './types'
+import type { AuthzRole, AuthzUser, CreateUserInput, FeatureFlag, Permission, RoleInput, SetFeatureFlagInput } from './types'
 
 export const listPermissions = () => apiClient.get<Permission[]>('/api/v1/authz/permissions')
 
@@ -16,3 +16,10 @@ export const updateUserRole = (id: string, roleId: string | null) =>
   apiClient.patch<AuthzUser>(`/api/v1/authz/users/${id}/role`, { role_id: roleId })
 export const updateUserStatus = (id: string, status: string) =>
   apiClient.patch<AuthzUser>(`/api/v1/authz/users/${id}/status`, { status })
+
+export const listFeatureFlags = () => apiClient.get<FeatureFlag[]>('/api/v1/authz/feature-flags')
+
+// Upserts — a key that doesn't exist yet gets created, so this also
+// doubles as "create new flag" (see the roadmap-driven FeatureFlagsPage).
+export const setFeatureFlag = (key: string, input: SetFeatureFlagInput) =>
+  apiClient.patch<FeatureFlag>(`/api/v1/authz/feature-flags/${encodeURIComponent(key)}`, input)

@@ -22,6 +22,21 @@ func (q *Queries) CountEncounters(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countEncountersForProviderToday = `-- name: CountEncountersForProviderToday :one
+SELECT count(*) FROM encounters
+WHERE provider_id = $1::uuid AND occurred_at::date = current_date
+`
+
+// Powers the physician-specific dashboard view's "patients seen today"
+// count (see dashboard.Summary.PatientsTodayCount) — encounters this
+// provider recorded whose occurred_at falls on the current calendar date.
+func (q *Queries) CountEncountersForProviderToday(ctx context.Context, providerID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countEncountersForProviderToday, providerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPatients = `-- name: CountPatients :one
 SELECT count(*) FROM patients
 `
@@ -107,33 +122,57 @@ func (q *Queries) CreateEncounter(ctx context.Context, arg CreateEncounterParams
 
 const createPatient = `-- name: CreatePatient :one
 INSERT INTO patients (user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+VALUES ($1, $2, $3, $4, pgp_sym_encrypt($8::text, $9::text), $5, $6, $7)
+RETURNING id, user_id, full_name, date_of_birth, sex,
+          CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $9::text)::text END AS national_id,
+          phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
 `
 
 type CreatePatientParams struct {
-	UserID      pgtype.UUID `json:"user_id"`
-	FullName    string      `json:"full_name"`
-	DateOfBirth pgtype.Date `json:"date_of_birth"`
-	Sex         pgtype.Text `json:"sex"`
-	NationalID  pgtype.Text `json:"national_id"`
-	Phone       pgtype.Text `json:"phone"`
-	Address     pgtype.Text `json:"address"`
-	NextOfKin   pgtype.Text `json:"next_of_kin"`
+	UserID        pgtype.UUID `json:"user_id"`
+	FullName      string      `json:"full_name"`
+	DateOfBirth   pgtype.Date `json:"date_of_birth"`
+	Sex           pgtype.Text `json:"sex"`
+	Phone         pgtype.Text `json:"phone"`
+	Address       pgtype.Text `json:"address"`
+	NextOfKin     pgtype.Text `json:"next_of_kin"`
+	NationalID    pgtype.Text `json:"national_id"`
+	EncryptionKey string      `json:"encryption_key"`
 }
 
-func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (Patient, error) {
+type CreatePatientRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+// national_id is encrypted at rest (pgcrypto pgp_sym_encrypt) — see
+// db/migrations/0024_encrypt_sensitive_columns.up.sql. The key is supplied
+// by the application on every call, never a DB-level setting.
+func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error) {
 	row := q.db.QueryRow(ctx, createPatient,
 		arg.UserID,
 		arg.FullName,
 		arg.DateOfBirth,
 		arg.Sex,
-		arg.NationalID,
 		arg.Phone,
 		arg.Address,
 		arg.NextOfKin,
+		arg.NationalID,
+		arg.EncryptionKey,
 	)
-	var i Patient
+	var i CreatePatientRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -176,12 +215,95 @@ func (q *Queries) FindEncounterByID(ctx context.Context, id pgtype.UUID) (Encoun
 }
 
 const findPatientByID = `-- name: FindPatientByID :one
-SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group FROM patients WHERE id = $1
+SELECT id, user_id, full_name, date_of_birth, sex,
+       CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $2::text)::text END AS national_id,
+       phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+FROM patients WHERE id = $1
 `
 
-func (q *Queries) FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient, error) {
-	row := q.db.QueryRow(ctx, findPatientByID, id)
-	var i Patient
+type FindPatientByIDParams struct {
+	ID            pgtype.UUID `json:"id"`
+	EncryptionKey string      `json:"encryption_key"`
+}
+
+type FindPatientByIDRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+// SELECT * would return national_id's raw encrypted bytes — explicit column
+// list so national_id can be decrypted in-query instead (see CreatePatient's
+// comment on why the key is a query param, not a DB-level setting).
+func (q *Queries) FindPatientByID(ctx context.Context, arg FindPatientByIDParams) (FindPatientByIDRow, error) {
+	row := q.db.QueryRow(ctx, findPatientByID, arg.ID, arg.EncryptionKey)
+	var i FindPatientByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FullName,
+		&i.DateOfBirth,
+		&i.Sex,
+		&i.NationalID,
+		&i.Phone,
+		&i.Address,
+		&i.NextOfKin,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Gender,
+		&i.BloodGroup,
+	)
+	return i, err
+}
+
+const findPatientByUserID = `-- name: FindPatientByUserID :one
+SELECT id, user_id, full_name, date_of_birth, sex,
+       CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $2::text)::text END AS national_id,
+       phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+FROM patients WHERE user_id = $1
+`
+
+type FindPatientByUserIDParams struct {
+	UserID        pgtype.UUID `json:"user_id"`
+	EncryptionKey string      `json:"encryption_key"`
+}
+
+type FindPatientByUserIDRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+// The reverse of FindPatientByID: resolves a patient-role user's own
+// patient_id from their user_id, e.g. so a patient can book their own
+// appointment (see records.Service.GetOwnPatientRecord /
+// appointments.Service.Book).
+func (q *Queries) FindPatientByUserID(ctx context.Context, arg FindPatientByUserIDParams) (FindPatientByUserIDRow, error) {
+	row := q.db.QueryRow(ctx, findPatientByUserID, arg.UserID, arg.EncryptionKey)
+	var i FindPatientByUserIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -202,15 +324,42 @@ func (q *Queries) FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient,
 }
 
 const findPatientMedicalHistoryByPatientID = `-- name: FindPatientMedicalHistoryByPatientID :one
-SELECT id, patient_id, allergies, chronic_conditions, current_medications, past_surgeries, family_history, vaccination_history, updated_by, created_at, updated_at FROM patient_medical_history WHERE patient_id = $1
+SELECT id, patient_id,
+       pgp_sym_decrypt(allergies, $2::text)::text::jsonb AS allergies,
+       pgp_sym_decrypt(chronic_conditions, $2::text)::text::jsonb AS chronic_conditions,
+       pgp_sym_decrypt(current_medications, $2::text)::text::jsonb AS current_medications,
+       pgp_sym_decrypt(past_surgeries, $2::text)::text::jsonb AS past_surgeries,
+       pgp_sym_decrypt(family_history, $2::text)::text::jsonb AS family_history,
+       pgp_sym_decrypt(vaccination_history, $2::text)::text::jsonb AS vaccination_history,
+       updated_by, created_at, updated_at
+FROM patient_medical_history WHERE patient_id = $1
 `
+
+type FindPatientMedicalHistoryByPatientIDParams struct {
+	PatientID     pgtype.UUID `json:"patient_id"`
+	EncryptionKey string      `json:"encryption_key"`
+}
+
+type FindPatientMedicalHistoryByPatientIDRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	PatientID          pgtype.UUID        `json:"patient_id"`
+	Allergies          []byte             `json:"allergies"`
+	ChronicConditions  []byte             `json:"chronic_conditions"`
+	CurrentMedications []byte             `json:"current_medications"`
+	PastSurgeries      []byte             `json:"past_surgeries"`
+	FamilyHistory      []byte             `json:"family_history"`
+	VaccinationHistory []byte             `json:"vaccination_history"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
 
 // Returns pgx.ErrNoRows if no row exists yet — expected (a patient with no
 // medical history recorded), handled in the repository layer, not an error
 // condition.
-func (q *Queries) FindPatientMedicalHistoryByPatientID(ctx context.Context, patientID pgtype.UUID) (PatientMedicalHistory, error) {
-	row := q.db.QueryRow(ctx, findPatientMedicalHistoryByPatientID, patientID)
-	var i PatientMedicalHistory
+func (q *Queries) FindPatientMedicalHistoryByPatientID(ctx context.Context, arg FindPatientMedicalHistoryByPatientIDParams) (FindPatientMedicalHistoryByPatientIDRow, error) {
+	row := q.db.QueryRow(ctx, findPatientMedicalHistoryByPatientID, arg.PatientID, arg.EncryptionKey)
+	var i FindPatientMedicalHistoryByPatientIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.PatientID,
@@ -294,18 +443,208 @@ func (q *Queries) ListObservationsByEncounter(ctx context.Context, encounterID p
 }
 
 const listPatients = `-- name: ListPatients :many
-SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group FROM patients ORDER BY created_at DESC
+SELECT id, user_id, full_name, date_of_birth, sex,
+       CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $1::text)::text END AS national_id,
+       phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+FROM patients ORDER BY created_at DESC
 `
 
-func (q *Queries) ListPatients(ctx context.Context) ([]Patient, error) {
-	rows, err := q.db.Query(ctx, listPatients)
+type ListPatientsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+func (q *Queries) ListPatients(ctx context.Context, encryptionKey string) ([]ListPatientsRow, error) {
+	rows, err := q.db.Query(ctx, listPatients, encryptionKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Patient
+	var items []ListPatientsRow
 	for rows.Next() {
-		var i Patient
+		var i ListPatientsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FullName,
+			&i.DateOfBirth,
+			&i.Sex,
+			&i.NationalID,
+			&i.Phone,
+			&i.Address,
+			&i.NextOfKin,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Gender,
+			&i.BloodGroup,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPatientsForFacility = `-- name: SearchPatientsForFacility :many
+SELECT p.id, p.user_id, p.full_name, p.date_of_birth, p.sex,
+       CASE WHEN p.national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(p.national_id, $1::text)::text END AS national_id,
+       p.phone, p.address, p.next_of_kin, p.version, p.created_at, p.updated_at, p.gender, p.blood_group
+FROM patients p
+JOIN consent_grants cg ON cg.patient_id = p.id
+WHERE cg.grantee_type = 'facility'
+  AND cg.grantee_id = $2::uuid
+  AND cg.status = 'active'
+  AND (cg.expires_at IS NULL OR cg.expires_at > now())
+  AND (
+    p.full_name ILIKE '%' || $3::text || '%'
+    OR p.phone ILIKE '%' || $3::text || '%'
+  )
+GROUP BY p.id
+ORDER BY similarity(p.full_name, $3::text) DESC, p.created_at DESC
+LIMIT $4::int
+`
+
+type SearchPatientsForFacilityParams struct {
+	EncryptionKey string      `json:"encryption_key"`
+	FacilityID    pgtype.UUID `json:"facility_id"`
+	Query         string      `json:"query"`
+	ResultLimit   int32       `json:"result_limit"`
+}
+
+type SearchPatientsForFacilityRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+// Facility-scoped patient search: only patients this facility already has
+// an active, unexpired consent grant for (the same boundary
+// consent.Checker.HasAccess enforces for a single patient) are
+// discoverable — a physician/hospital_admin cannot use search to find a
+// patient at another facility they have no standing or referral-driven
+// access to. See records.Service.SearchPatients.
+// national_id is deliberately NOT matched here — see SearchPatientsUnscoped's
+// comment on why an encrypted column can't support partial/exact-match
+// search without a separate deterministic hash column (out of scope).
+func (q *Queries) SearchPatientsForFacility(ctx context.Context, arg SearchPatientsForFacilityParams) ([]SearchPatientsForFacilityRow, error) {
+	rows, err := q.db.Query(ctx, searchPatientsForFacility,
+		arg.EncryptionKey,
+		arg.FacilityID,
+		arg.Query,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPatientsForFacilityRow
+	for rows.Next() {
+		var i SearchPatientsForFacilityRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FullName,
+			&i.DateOfBirth,
+			&i.Sex,
+			&i.NationalID,
+			&i.Phone,
+			&i.Address,
+			&i.NextOfKin,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Gender,
+			&i.BloodGroup,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPatientsUnscoped = `-- name: SearchPatientsUnscoped :many
+SELECT id, user_id, full_name, date_of_birth, sex,
+       CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $1::text)::text END AS national_id,
+       phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+FROM patients
+WHERE full_name ILIKE '%' || $2::text || '%'
+   OR phone ILIKE '%' || $2::text || '%'
+ORDER BY similarity(full_name, $2::text) DESC, created_at DESC
+LIMIT $3::int
+`
+
+type SearchPatientsUnscopedParams struct {
+	EncryptionKey string `json:"encryption_key"`
+	Query         string `json:"query"`
+	ResultLimit   int32  `json:"result_limit"`
+}
+
+type SearchPatientsUnscopedRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+// Unscoped patient-directory search — same "bypasses consent grants"
+// caveat as ListPatients, so callers must gate this to system_admin only
+// (see records.Service.SearchPatients / search.Service.Search).
+// national_id is deliberately NOT matched here: it's encrypted at rest with
+// a non-deterministic cipher (pgp_sym_encrypt produces different ciphertext
+// for the same plaintext on every call), so there's no way to ILIKE-match
+// or even exact-match it without a separate deterministic hash column,
+// which is out of scope for this task. This is an accepted capability loss
+// — national_id is no longer searchable, only full_name/phone are.
+func (q *Queries) SearchPatientsUnscoped(ctx context.Context, arg SearchPatientsUnscopedParams) ([]SearchPatientsUnscopedRow, error) {
+	rows, err := q.db.Query(ctx, searchPatientsUnscoped, arg.EncryptionKey, arg.Query, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPatientsUnscopedRow
+	for rows.Next() {
+		var i SearchPatientsUnscopedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -338,18 +677,43 @@ SET gender = $2,
     blood_group = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+RETURNING id, user_id, full_name, date_of_birth, sex,
+          CASE WHEN national_id IS NULL THEN NULL ELSE pgp_sym_decrypt(national_id, $4::text)::text END AS national_id,
+          phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
 `
 
 type UpdatePatientGenderBloodGroupParams struct {
-	ID         pgtype.UUID `json:"id"`
-	Gender     pgtype.Text `json:"gender"`
-	BloodGroup pgtype.Text `json:"blood_group"`
+	ID            pgtype.UUID `json:"id"`
+	Gender        pgtype.Text `json:"gender"`
+	BloodGroup    pgtype.Text `json:"blood_group"`
+	EncryptionKey string      `json:"encryption_key"`
 }
 
-func (q *Queries) UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (Patient, error) {
-	row := q.db.QueryRow(ctx, updatePatientGenderBloodGroup, arg.ID, arg.Gender, arg.BloodGroup)
-	var i Patient
+type UpdatePatientGenderBloodGroupRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	FullName    string             `json:"full_name"`
+	DateOfBirth pgtype.Date        `json:"date_of_birth"`
+	Sex         pgtype.Text        `json:"sex"`
+	NationalID  string             `json:"national_id"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	NextOfKin   pgtype.Text        `json:"next_of_kin"`
+	Version     int32              `json:"version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+func (q *Queries) UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (UpdatePatientGenderBloodGroupRow, error) {
+	row := q.db.QueryRow(ctx, updatePatientGenderBloodGroup,
+		arg.ID,
+		arg.Gender,
+		arg.BloodGroup,
+		arg.EncryptionKey,
+	)
+	var i UpdatePatientGenderBloodGroupRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -374,7 +738,16 @@ INSERT INTO patient_medical_history (
     patient_id, allergies, chronic_conditions, current_medications,
     past_surgeries, family_history, vaccination_history, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES (
+    $1,
+    pgp_sym_encrypt($2::text, $9::text),
+    pgp_sym_encrypt($3::text, $9::text),
+    pgp_sym_encrypt($4::text, $9::text),
+    pgp_sym_encrypt($5::text, $9::text),
+    pgp_sym_encrypt($6::text, $9::text),
+    pgp_sym_encrypt($7::text, $9::text),
+    $8
+)
 ON CONFLICT (patient_id) DO UPDATE
 SET allergies = EXCLUDED.allergies,
     chronic_conditions = EXCLUDED.chronic_conditions,
@@ -384,35 +757,64 @@ SET allergies = EXCLUDED.allergies,
     vaccination_history = EXCLUDED.vaccination_history,
     updated_by = EXCLUDED.updated_by,
     updated_at = now()
-RETURNING id, patient_id, allergies, chronic_conditions, current_medications, past_surgeries, family_history, vaccination_history, updated_by, created_at, updated_at
+RETURNING id, patient_id,
+          pgp_sym_decrypt(allergies, $9::text)::text::jsonb AS allergies,
+          pgp_sym_decrypt(chronic_conditions, $9::text)::text::jsonb AS chronic_conditions,
+          pgp_sym_decrypt(current_medications, $9::text)::text::jsonb AS current_medications,
+          pgp_sym_decrypt(past_surgeries, $9::text)::text::jsonb AS past_surgeries,
+          pgp_sym_decrypt(family_history, $9::text)::text::jsonb AS family_history,
+          pgp_sym_decrypt(vaccination_history, $9::text)::text::jsonb AS vaccination_history,
+          updated_by, created_at, updated_at
 `
 
 type UpsertPatientMedicalHistoryParams struct {
-	PatientID          pgtype.UUID `json:"patient_id"`
-	Allergies          []byte      `json:"allergies"`
-	ChronicConditions  []byte      `json:"chronic_conditions"`
-	CurrentMedications []byte      `json:"current_medications"`
-	PastSurgeries      []byte      `json:"past_surgeries"`
-	FamilyHistory      []byte      `json:"family_history"`
-	VaccinationHistory []byte      `json:"vaccination_history"`
-	UpdatedBy          pgtype.UUID `json:"updated_by"`
+	PatientID     pgtype.UUID `json:"patient_id"`
+	Column2       string      `json:"column_2"`
+	Column3       string      `json:"column_3"`
+	Column4       string      `json:"column_4"`
+	Column5       string      `json:"column_5"`
+	Column6       string      `json:"column_6"`
+	Column7       string      `json:"column_7"`
+	UpdatedBy     pgtype.UUID `json:"updated_by"`
+	EncryptionKey string      `json:"encryption_key"`
+}
+
+type UpsertPatientMedicalHistoryRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	PatientID          pgtype.UUID        `json:"patient_id"`
+	Allergies          []byte             `json:"allergies"`
+	ChronicConditions  []byte             `json:"chronic_conditions"`
+	CurrentMedications []byte             `json:"current_medications"`
+	PastSurgeries      []byte             `json:"past_surgeries"`
+	FamilyHistory      []byte             `json:"family_history"`
+	VaccinationHistory []byte             `json:"vaccination_history"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Always a full replacement of all six jsonb columns (plus updated_by) —
 // no partial-update merge here, unlike UpsertUserProfile. See
-// Service.UpdateMedicalHistory.
-func (q *Queries) UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (PatientMedicalHistory, error) {
+// Service.UpdateMedicalHistory. All six columns are encrypted at rest
+// (pgcrypto pgp_sym_encrypt) — see
+// db/migrations/0024_encrypt_sensitive_columns.up.sql. The Go layer passes
+// these in as raw JSON bytes ([]byte), same as before this migration;
+// encrypting the ::text form of that raw JSON and decrypting back to
+// ::text::jsonb on the way out keeps that []byte shape unchanged from the
+// caller's perspective.
+func (q *Queries) UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (UpsertPatientMedicalHistoryRow, error) {
 	row := q.db.QueryRow(ctx, upsertPatientMedicalHistory,
 		arg.PatientID,
-		arg.Allergies,
-		arg.ChronicConditions,
-		arg.CurrentMedications,
-		arg.PastSurgeries,
-		arg.FamilyHistory,
-		arg.VaccinationHistory,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
 		arg.UpdatedBy,
+		arg.EncryptionKey,
 	)
-	var i PatientMedicalHistory
+	var i UpsertPatientMedicalHistoryRow
 	err := row.Scan(
 		&i.ID,
 		&i.PatientID,

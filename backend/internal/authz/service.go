@@ -14,7 +14,7 @@ import (
 // "create user" flow needs — creating the login credentials themselves,
 // distinct from public self-registration.
 type AccountCreator interface {
-	CreateAccount(ctx context.Context, email, phone *string, password string, role platform.Role) (identity.User, error)
+	CreateAccount(ctx context.Context, email, phone *string, password string, role platform.Role, fullName *string) (identity.User, error)
 }
 
 // ProviderAffiliator lets the admin optionally attach the new user to a
@@ -117,6 +117,7 @@ type CreateUserInput struct {
 	FacilityID    *uuid.UUID
 	Specialty     *string
 	LicenseNumber *string
+	FullName      *string
 }
 
 // CreateUser is the admin-driven account creation flow: makes the login
@@ -124,7 +125,7 @@ type CreateUserInput struct {
 // row, and optionally assigns a dynamic permission role — all three are
 // independent, so any combination the admin picks is valid.
 func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (User, error) {
-	account, err := s.accounts.CreateAccount(ctx, in.Email, in.Phone, in.Password, in.LegacyRole)
+	account, err := s.accounts.CreateAccount(ctx, in.Email, in.Phone, in.Password, in.LegacyRole, in.FullName)
 	if err != nil {
 		return User{}, err
 	}
@@ -170,4 +171,18 @@ func (s *Service) SetUserStatus(ctx context.Context, userID uuid.UUID, status st
 
 func (s *Service) CountUsers(ctx context.Context) (int64, error) {
 	return s.repo.CountUsers(ctx)
+}
+
+// ListFeatureFlags returns every feature flag — system_admin only,
+// restricting who may call this is the handler's job (route-level
+// platform.RequireRoles, same as every other admin-only method in this
+// service relies on).
+func (s *Service) ListFeatureFlags(ctx context.Context) ([]FeatureFlag, error) {
+	return s.repo.ListFeatureFlags(ctx)
+}
+
+// SetFeatureFlag creates or updates the flag identified by key. Like
+// ListFeatureFlags, restricted to system_admin at the route level.
+func (s *Service) SetFeatureFlag(ctx context.Context, key string, enabled bool, description *string) (FeatureFlag, error) {
+	return s.repo.UpsertFeatureFlag(ctx, key, enabled, description)
 }

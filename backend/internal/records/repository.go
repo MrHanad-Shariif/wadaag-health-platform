@@ -70,10 +70,58 @@ func (r *Repository) FindPatientByID(ctx context.Context, id uuid.UUID) (Patient
 	return patientFromRow(row), nil
 }
 
+// FindPatientByUserID is the reverse of FindPatientByID — resolves a
+// patient-role user's own patient row from their user_id. See
+// Service.GetOwnPatientRecord.
+func (r *Repository) FindPatientByUserID(ctx context.Context, userID uuid.UUID) (Patient, error) {
+	row, err := r.q.FindPatientByUserID(ctx, platform.PgUUIDPtr(&userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Patient{}, ErrPatientNotFound
+	}
+	if err != nil {
+		return Patient{}, fmt.Errorf("query patient by user id: %w", err)
+	}
+	return patientFromRow(row), nil
+}
+
 func (r *Repository) ListPatients(ctx context.Context) ([]Patient, error) {
 	rows, err := r.q.ListPatients(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list patients: %w", err)
+	}
+	patients := make([]Patient, len(rows))
+	for i, row := range rows {
+		patients[i] = patientFromRow(row)
+	}
+	return patients, nil
+}
+
+// SearchPatientsUnscoped is the system_admin-only directory search — see
+// the doc comment on Service.ListPatients for why this bypasses consent
+// grants and must be gated to that role by the caller.
+func (r *Repository) SearchPatientsUnscoped(ctx context.Context, query string, limit int) ([]Patient, error) {
+	rows, err := r.q.SearchPatientsUnscoped(ctx, sqlcgen.SearchPatientsUnscopedParams{
+		Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search patients: %w", err)
+	}
+	patients := make([]Patient, len(rows))
+	for i, row := range rows {
+		patients[i] = patientFromRow(row)
+	}
+	return patients, nil
+}
+
+// SearchPatientsForFacility scopes results to patients facilityID already
+// holds an active consent grant for — see the sqlc query's comment for why
+// this is the same boundary consent.Checker.HasAccess enforces per-patient.
+func (r *Repository) SearchPatientsForFacility(ctx context.Context, facilityID uuid.UUID, query string, limit int) ([]Patient, error) {
+	rows, err := r.q.SearchPatientsForFacility(ctx, sqlcgen.SearchPatientsForFacilityParams{
+		FacilityID: platform.PgUUID(facilityID), Query: query, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search patients for facility: %w", err)
 	}
 	patients := make([]Patient, len(rows))
 	for i, row := range rows {
@@ -142,6 +190,17 @@ func (r *Repository) CountEncounters(ctx context.Context) (int64, error) {
 	count, err := r.q.CountEncounters(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("count encounters: %w", err)
+	}
+	return count, nil
+}
+
+// CountEncountersForProviderToday is the physician-specific dashboard
+// view's "patients seen today" count — encounters providerID recorded
+// whose occurred_at falls on the current calendar date.
+func (r *Repository) CountEncountersForProviderToday(ctx context.Context, providerID uuid.UUID) (int64, error) {
+	count, err := r.q.CountEncountersForProviderToday(ctx, platform.PgUUID(providerID))
+	if err != nil {
+		return 0, fmt.Errorf("count encounters for provider today: %w", err)
 	}
 	return count, nil
 }

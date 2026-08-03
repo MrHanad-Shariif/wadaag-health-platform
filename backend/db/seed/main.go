@@ -136,7 +136,8 @@ func seedAdministratorUser(ctx context.Context, identityRepo *identity.Repositor
 		return fmt.Errorf("hash administrator password: %w", err)
 	}
 
-	user, err := identityRepo.CreateUser(ctx, &email, nil, string(hash), platform.RoleSystemAdmin)
+	fullName := "System Administrator"
+	user, err := identityRepo.CreateUser(ctx, &email, nil, string(hash), platform.RoleSystemAdmin, &fullName)
 	if err != nil {
 		if !errors.Is(err, identity.ErrDuplicateUser) {
 			return fmt.Errorf("create administrator user: %w", err)

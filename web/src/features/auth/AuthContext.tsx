@@ -7,6 +7,9 @@ interface AuthState {
   loading: boolean
   login: (identifier: string, password: string) => Promise<void>
   logout: () => void
+  // Lets pages that update the caller's own account (e.g. full name) sync
+  // the change into shared auth state without a full /auth/me refetch.
+  updateUser: (user: User) => void
 }
 
 export const AuthContext = createContext<AuthState | null>(null)
@@ -40,8 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
+  const updateUser = useCallback((updated: User) => {
+    setUser(updated)
+  }, [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   )

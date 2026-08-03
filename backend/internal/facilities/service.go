@@ -32,6 +32,18 @@ func (s *Service) ListFacilities(ctx context.Context) ([]Facility, error) {
 	return s.repo.ListFacilities(ctx)
 }
 
+// SearchFacilities is a directory-style search by facility name — open to
+// any authenticated user, see search.Service.Search.
+func (s *Service) SearchFacilities(ctx context.Context, query string, limit int) ([]Facility, error) {
+	return s.repo.SearchFacilities(ctx, query, limit)
+}
+
+// SearchProviders is a directory-style "doctor" search by the provider's
+// linked user's full_name or specialty — open to any authenticated user.
+func (s *Service) SearchProviders(ctx context.Context, query string, limit int) ([]ProviderSearchResult, error) {
+	return s.repo.SearchProviders(ctx, query, limit)
+}
+
 func (s *Service) CountFacilities(ctx context.Context) (int64, error) {
 	return s.repo.CountFacilities(ctx)
 }
@@ -42,34 +54,37 @@ func (s *Service) GetFacility(ctx context.Context, id uuid.UUID) (Facility, erro
 
 // UpdateFacilityInput is PATCH /{facilityID}'s body, pre-decoded: a nil
 // field means "leave this field unchanged" — same partial-update contract as
-// identity.UpdateProfileInput. Only logo_url/working_hours are settable here
-// (name/type/region/etc. are out of scope for this endpoint).
+// identity.UpdateProfileInput. Only logo_url/working_hours/referral_policies
+// are settable here (name/type/region/etc. are out of scope for this
+// endpoint).
 type UpdateFacilityInput struct {
-	LogoURL      *string
-	WorkingHours *[]byte
+	LogoURL          *string
+	WorkingHours     *[]byte
+	ReferralPolicies *string
 }
 
 // UpdateFacility is the "read current, overlay supplied fields, write
-// merged result" partial update for a facility's logo/working-hours, so a
-// PATCH that only sends {"logo_url": "..."} doesn't clear working_hours a
-// caller set earlier. Mirrors identity.Service.UpdateProfile /
-// mergeProfileUpdate; see Repository.UpdateFacilityLogoAndHours for why the
-// merge happens here rather than in the repository.
+// merged result" partial update for a facility's logo/working-hours/
+// referral-policies, so a PATCH that only sends {"logo_url": "..."}
+// doesn't clear working_hours/referral_policies a caller set earlier.
+// Mirrors identity.Service.UpdateProfile / mergeProfileUpdate; see
+// Repository.UpdateFacilityLogoAndHours for why the merge happens here
+// rather than in the repository.
 func (s *Service) UpdateFacility(ctx context.Context, id uuid.UUID, in UpdateFacilityInput) (Facility, error) {
 	current, err := s.repo.FindFacilityByID(ctx, id)
 	if err != nil {
 		return Facility{}, err
 	}
 
-	logoURL, workingHours := mergeFacilityUpdate(current, in)
-	return s.repo.UpdateFacilityLogoAndHours(ctx, id, logoURL, workingHours)
+	logoURL, workingHours, referralPolicies := mergeFacilityUpdate(current, in)
+	return s.repo.UpdateFacilityLogoAndHours(ctx, id, logoURL, workingHours, referralPolicies)
 }
 
 // mergeFacilityUpdate overlays in's non-nil fields onto current, leaving
 // everything else as-is. Pulled out as a pure function (no DB) so the
 // partial-update semantics can be unit-tested directly — mirrors
 // identity.mergeProfileUpdate.
-func mergeFacilityUpdate(current Facility, in UpdateFacilityInput) (logoURL *string, workingHours []byte) {
+func mergeFacilityUpdate(current Facility, in UpdateFacilityInput) (logoURL *string, workingHours []byte, referralPolicies *string) {
 	logoURL = current.LogoURL
 	if in.LogoURL != nil {
 		logoURL = in.LogoURL
@@ -80,7 +95,12 @@ func mergeFacilityUpdate(current Facility, in UpdateFacilityInput) (logoURL *str
 		workingHours = *in.WorkingHours
 	}
 
-	return logoURL, workingHours
+	referralPolicies = current.ReferralPolicies
+	if in.ReferralPolicies != nil {
+		referralPolicies = in.ReferralPolicies
+	}
+
+	return logoURL, workingHours, referralPolicies
 }
 
 type CreateBranchInput struct {
@@ -107,6 +127,13 @@ type UpdateBranchInput struct {
 	Phone   *string
 }
 
+// GetBranch is used by the handler to resolve a branch's facility_id ahead
+// of an update/delete, so a hospital_admin's facility-scoping check has
+// something to compare against before the write happens.
+func (s *Service) GetBranch(ctx context.Context, id uuid.UUID) (Branch, error) {
+	return s.repo.FindBranchByID(ctx, id)
+}
+
 func (s *Service) UpdateBranch(ctx context.Context, id uuid.UUID, in UpdateBranchInput) (Branch, error) {
 	return s.repo.UpdateBranch(ctx, id, in.Name, in.Address, in.Phone)
 }
@@ -129,6 +156,12 @@ func (s *Service) CreateDepartment(ctx context.Context, in CreateDepartmentInput
 
 func (s *Service) ListDepartmentsByFacility(ctx context.Context, facilityID uuid.UUID) ([]Department, error) {
 	return s.repo.ListDepartmentsByFacility(ctx, facilityID)
+}
+
+// GetDepartment is used by the handler to resolve a department's
+// facility_id ahead of an update/delete, mirroring GetBranch.
+func (s *Service) GetDepartment(ctx context.Context, id uuid.UUID) (Department, error) {
+	return s.repo.FindDepartmentByID(ctx, id)
 }
 
 func (s *Service) UpdateDepartment(ctx context.Context, id uuid.UUID, name string) (Department, error) {

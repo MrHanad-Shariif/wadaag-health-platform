@@ -15,33 +15,37 @@ func strPtr(s string) *string { return &s }
 // Mirrors identity.TestMergeProfileUpdate.
 func TestMergeFacilityUpdate(t *testing.T) {
 	existing := Facility{
-		LogoURL:      strPtr("https://example.com/old-logo.png"),
-		WorkingHours: []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+		LogoURL:          strPtr("https://example.com/old-logo.png"),
+		WorkingHours:     []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+		ReferralPolicies: strPtr("Only accepts routine referrals on weekdays."),
 	}
 
 	tests := []struct {
-		name             string
-		current          Facility
-		in               UpdateFacilityInput
-		wantLogoURL      *string
-		wantWorkingHours []byte
+		name                 string
+		current              Facility
+		in                   UpdateFacilityInput
+		wantLogoURL          *string
+		wantWorkingHours     []byte
+		wantReferralPolicies *string
 	}{
 		{
-			name:             "empty input leaves every existing field unchanged",
-			current:          existing,
-			in:               UpdateFacilityInput{},
-			wantLogoURL:      strPtr("https://example.com/old-logo.png"),
-			wantWorkingHours: []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+			name:                 "empty input leaves every existing field unchanged",
+			current:              existing,
+			in:                   UpdateFacilityInput{},
+			wantLogoURL:          strPtr("https://example.com/old-logo.png"),
+			wantWorkingHours:     []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+			wantReferralPolicies: strPtr("Only accepts routine referrals on weekdays."),
 		},
 		{
-			name:             "supplying only logo_url leaves working_hours untouched",
-			current:          existing,
-			in:               UpdateFacilityInput{LogoURL: strPtr("https://example.com/new-logo.png")},
-			wantLogoURL:      strPtr("https://example.com/new-logo.png"),
-			wantWorkingHours: []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+			name:                 "supplying only logo_url leaves working_hours and referral_policies untouched",
+			current:              existing,
+			in:                   UpdateFacilityInput{LogoURL: strPtr("https://example.com/new-logo.png")},
+			wantLogoURL:          strPtr("https://example.com/new-logo.png"),
+			wantWorkingHours:     []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+			wantReferralPolicies: strPtr("Only accepts routine referrals on weekdays."),
 		},
 		{
-			name: "supplying only working_hours leaves logo_url untouched",
+			name: "supplying only working_hours leaves logo_url and referral_policies untouched",
 			current: existing,
 			in: UpdateFacilityInput{
 				WorkingHours: func() *[]byte {
@@ -49,27 +53,40 @@ func TestMergeFacilityUpdate(t *testing.T) {
 					return &wh
 				}(),
 			},
-			wantLogoURL:      strPtr("https://example.com/old-logo.png"),
-			wantWorkingHours: []byte(`{"tue":{"open":"09:00","close":"18:00"}}`),
+			wantLogoURL:          strPtr("https://example.com/old-logo.png"),
+			wantWorkingHours:     []byte(`{"tue":{"open":"09:00","close":"18:00"}}`),
+			wantReferralPolicies: strPtr("Only accepts routine referrals on weekdays."),
 		},
 		{
-			name:             "no existing values (zero-value current) with a partial update only sets the supplied field",
-			current:          Facility{},
-			in:               UpdateFacilityInput{LogoURL: strPtr("https://example.com/logo.png")},
-			wantLogoURL:      strPtr("https://example.com/logo.png"),
-			wantWorkingHours: nil,
+			name:                 "supplying only referral_policies leaves logo_url and working_hours untouched",
+			current:              existing,
+			in:                   UpdateFacilityInput{ReferralPolicies: strPtr("Accepts emergency referrals 24/7.")},
+			wantLogoURL:          strPtr("https://example.com/old-logo.png"),
+			wantWorkingHours:     []byte(`{"mon":{"open":"08:00","close":"17:00"}}`),
+			wantReferralPolicies: strPtr("Accepts emergency referrals 24/7."),
+		},
+		{
+			name:                 "no existing values (zero-value current) with a partial update only sets the supplied field",
+			current:              Facility{},
+			in:                   UpdateFacilityInput{LogoURL: strPtr("https://example.com/logo.png")},
+			wantLogoURL:          strPtr("https://example.com/logo.png"),
+			wantWorkingHours:     nil,
+			wantReferralPolicies: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logoURL, workingHours := mergeFacilityUpdate(tt.current, tt.in)
+			logoURL, workingHours, referralPolicies := mergeFacilityUpdate(tt.current, tt.in)
 
 			if !reflect.DeepEqual(logoURL, tt.wantLogoURL) {
 				t.Errorf("logoURL = %v, want %v", derefOrNil(logoURL), derefOrNil(tt.wantLogoURL))
 			}
 			if !reflect.DeepEqual(workingHours, tt.wantWorkingHours) {
 				t.Errorf("workingHours = %s, want %s", workingHours, tt.wantWorkingHours)
+			}
+			if !reflect.DeepEqual(referralPolicies, tt.wantReferralPolicies) {
+				t.Errorf("referralPolicies = %v, want %v", derefOrNil(referralPolicies), derefOrNil(tt.wantReferralPolicies))
 			}
 		})
 	}

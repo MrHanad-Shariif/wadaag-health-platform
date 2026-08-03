@@ -42,13 +42,13 @@ JOIN roles r ON u.role_id = r.id
 WHERE u.id = $1;
 
 -- name: ListUsersWithRole :many
-SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, r.name AS role_name
+SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, u.full_name, r.name AS role_name
 FROM users u
 LEFT JOIN roles r ON u.role_id = r.id
 ORDER BY u.created_at DESC;
 
 -- name: FindUserWithRoleByID :one
-SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, r.name AS role_name
+SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at, u.role_id, u.full_name, r.name AS role_name
 FROM users u
 LEFT JOIN roles r ON u.role_id = r.id
 WHERE u.id = $1;

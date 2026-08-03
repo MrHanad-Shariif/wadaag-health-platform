@@ -9,6 +9,7 @@ import { register } from './api'
 export function SignupPage({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
   const { login } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -26,7 +27,7 @@ export function SignupPage({ onSwitchToLogin }: { onSwitchToLogin: () => void })
 
     setSubmitting(true)
     try {
-      await register(email, password)
+      await register(email, password, fullName)
       await login(email, password)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create account. Try again.')
@@ -60,6 +61,16 @@ export function SignupPage({ onSwitchToLogin }: { onSwitchToLogin: () => void })
         <form className="auth-form" onSubmit={handleSubmit}>
           <h2>Create your account</h2>
           <p className="auth-form__subtitle">Sign up as a patient and choose your own password.</p>
+
+          <label htmlFor="fullName">Full name</label>
+          <input
+            id="fullName"
+            type="text"
+            autoComplete="name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+          />
 
           <label htmlFor="email">Email</label>
           <input

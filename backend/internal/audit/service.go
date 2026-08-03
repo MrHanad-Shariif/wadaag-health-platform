@@ -50,3 +50,11 @@ func (l *Logger) Record(ctx context.Context, in RecordInput) {
 func (l *Logger) ListForPatient(ctx context.Context, patientID uuid.UUID) ([]Entry, error) {
 	return l.repo.ListForPatient(ctx, patientID)
 }
+
+// ListEntries is the general, filtered audit-browser listing — see
+// EntryFilter's doc comment. Restricting who may call this (system_admin
+// only) is the handler's job, same as every other route-level
+// authorization decision in this codebase.
+func (l *Logger) ListEntries(ctx context.Context, filter EntryFilter) ([]Entry, error) {
+	return l.repo.ListEntries(ctx, filter)
+}

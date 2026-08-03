@@ -33,6 +33,7 @@ export interface Facility {
   address?: string
   logo_url?: string
   working_hours?: WorkingHours
+  referral_policies?: string
 }
 
 export interface CreateFacilityInput {
@@ -44,12 +45,14 @@ export interface CreateFacilityInput {
   address?: string
 }
 
-// PATCH /facilities/{facilityID} only accepts logo_url/working_hours — a
-// partial update where an omitted field leaves the current value unchanged
-// (see UpdateFacilityInput in backend/internal/facilities/service.go).
+// PATCH /facilities/{facilityID} only accepts logo_url/working_hours/
+// referral_policies — a partial update where an omitted field leaves the
+// current value unchanged (see UpdateFacilityInput in
+// backend/internal/facilities/service.go).
 export interface UpdateFacilityInput {
   logo_url?: string
   working_hours?: WorkingHours
+  referral_policies?: string
 }
 
 export interface Branch {

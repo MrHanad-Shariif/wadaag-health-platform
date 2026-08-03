@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wadaag/health-platform/backend/internal/consent"
+	"github.com/wadaag/health-platform/backend/internal/platform"
 )
 
 // ProviderResolver maps the calling user to their provider identity — the
@@ -18,14 +20,55 @@ type ProviderResolver interface {
 	ResolveProviderID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 }
 
+// NotificationPublisher is the narrow surface this package needs from
+// notifications.Service, defined locally so records doesn't import that
+// package directly. Optional (nil by default); set via
+// SetNotificationPublisher. Satisfied by *notifications.Service.
+type NotificationPublisher interface {
+	Publish(ctx context.Context, userID uuid.UUID, notifType string, payload map[string]any) error
+}
+
 type Service struct {
 	repo     *Repository
 	consent  *consent.Checker
 	provider ProviderResolver
+
+	// notify is optional (nil by default) — set via SetNotificationPublisher
+	// in main.go. Nil-tolerant wherever it's used, so existing construction
+	// paths and tests keep working unchanged.
+	notify NotificationPublisher
 }
 
 func NewService(repo *Repository, consentChecker *consent.Checker, provider ProviderResolver) *Service {
 	return &Service{repo: repo, consent: consentChecker, provider: provider}
+}
+
+// SetNotificationPublisher wires the optional in-app notification publisher.
+func (s *Service) SetNotificationPublisher(p NotificationPublisher) { s.notify = p }
+
+// notifyPatientUser publishes a "record_updated" notification to the
+// patient's linked user account, if one exists and a publisher is wired.
+// Never returns an error — a failed or skipped notification must never
+// block the write it's describing (same philosophy as
+// audit.Logger.Record).
+func (s *Service) notifyPatientUser(ctx context.Context, patientID uuid.UUID, kind string) {
+	if s.notify == nil {
+		return
+	}
+	patientUserID, err := s.GetPatientUserID(ctx, patientID)
+	if err != nil {
+		slog.Error("failed to resolve patient user for notification", "error", err, "patient_id", patientID)
+		return
+	}
+	if patientUserID == nil {
+		return
+	}
+	err = s.notify.Publish(ctx, *patientUserID, "record_updated", map[string]any{
+		"patient_id": patientID.String(), "kind": kind,
+	})
+	if err != nil {
+		slog.Error("failed to publish record updated notification", "error", err, "patient_id", patientID)
+	}
 }
 
 type CreatePatientInput struct {
@@ -67,6 +110,15 @@ func (s *Service) GetPatient(ctx context.Context, id uuid.UUID) (Patient, error)
 	return s.repo.FindPatientByID(ctx, id)
 }
 
+// GetOwnPatientRecord resolves a patient-role user's own patient_id from
+// their user_id — the reverse of GetPatientUserID. Needed anywhere a
+// patient-role caller must act on their own record without being able to
+// supply a patient_id themselves (see appointments.Service.Book, which
+// never trusts a patient-supplied patient_id).
+func (s *Service) GetOwnPatientRecord(ctx context.Context, userID uuid.UUID) (Patient, error) {
+	return s.repo.FindPatientByUserID(ctx, userID)
+}
+
 // ListPatients returns every registered patient across all facilities —
 // unlike GetPatient this bypasses consent grants, so callers must gate it
 // to a role that's meant to see system-wide patient data (currently
@@ -75,12 +127,39 @@ func (s *Service) ListPatients(ctx context.Context) ([]Patient, error) {
 	return s.repo.ListPatients(ctx)
 }
 
+// SearchPatients performs a directory-style patient search, scoped by the
+// caller's role — see the doc comment on ListPatients for why patient
+// visibility can't be a single unscoped query. system_admin gets the
+// unscoped, system-wide view; every other caller gets results scoped to
+// patients their facility already holds an active consent grant for (the
+// same boundary consent.Checker.HasAccess enforces per-patient), never a
+// system-wide view — this is a search, not a way to bypass consent.
+// Restricting *who* may call SearchPatients at all (system_admin,
+// physician, hospital_admin) is the caller's job (see search.Service),
+// not this method's; a caller with neither an admin role nor a facility
+// affiliation gets an empty result rather than an error.
+func (s *Service) SearchPatients(ctx context.Context, actorRole platform.Role, actorFacilityID *uuid.UUID, query string, limit int) ([]Patient, error) {
+	if actorRole == platform.RoleSystemAdmin {
+		return s.repo.SearchPatientsUnscoped(ctx, query, limit)
+	}
+	if actorFacilityID == nil {
+		return nil, nil
+	}
+	return s.repo.SearchPatientsForFacility(ctx, *actorFacilityID, query, limit)
+}
+
 func (s *Service) CountPatients(ctx context.Context) (int64, error) {
 	return s.repo.CountPatients(ctx)
 }
 
 func (s *Service) CountEncounters(ctx context.Context) (int64, error) {
 	return s.repo.CountEncounters(ctx)
+}
+
+// CountEncountersForProviderToday implements dashboard.EncounterTodayCounter
+// — how many encounters providerID has recorded today.
+func (s *Service) CountEncountersForProviderToday(ctx context.Context, providerID uuid.UUID) (int64, error) {
+	return s.repo.CountEncountersForProviderToday(ctx, providerID)
 }
 
 // GetPatientUserID implements referrals.PatientLookup — lets referrals
@@ -117,10 +196,17 @@ func (s *Service) CreateEncounter(ctx context.Context, actorUserID uuid.UUID, ac
 		return Encounter{}, fmt.Errorf("resolve provider identity: %w", err)
 	}
 
-	return s.repo.CreateEncounter(ctx, CreateEncounterParams{
+	encounter, err := s.repo.CreateEncounter(ctx, CreateEncounterParams{
 		PatientID: in.PatientID, FacilityID: actorFacilityID, ProviderID: providerID,
 		Type: in.Type, Notes: in.Notes, OccurredAt: in.OccurredAt,
 	})
+	if err != nil {
+		return Encounter{}, err
+	}
+
+	s.notifyPatientUser(ctx, in.PatientID, "encounter")
+
+	return encounter, nil
 }
 
 func (s *Service) GetEncounter(ctx context.Context, id uuid.UUID) (Encounter, error) {
@@ -222,7 +308,7 @@ func defaultJSONArray(raw json.RawMessage) []byte {
 }
 
 func (s *Service) UpdateMedicalHistory(ctx context.Context, patientID uuid.UUID, updatedBy uuid.UUID, in UpdateMedicalHistoryInput) (PatientMedicalHistory, error) {
-	return s.repo.UpsertPatientMedicalHistory(
+	history, err := s.repo.UpsertPatientMedicalHistory(
 		ctx, patientID, updatedBy,
 		defaultJSONArray(in.Allergies),
 		defaultJSONArray(in.ChronicConditions),
@@ -231,4 +317,11 @@ func (s *Service) UpdateMedicalHistory(ctx context.Context, patientID uuid.UUID,
 		defaultJSONArray(in.FamilyHistory),
 		defaultJSONArray(in.VaccinationHistory),
 	)
+	if err != nil {
+		return PatientMedicalHistory{}, err
+	}
+
+	s.notifyPatientUser(ctx, patientID, "medical_history")
+
+	return history, nil
 }

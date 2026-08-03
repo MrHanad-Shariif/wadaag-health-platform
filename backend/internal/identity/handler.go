@@ -3,6 +3,7 @@ package identity
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -36,12 +37,15 @@ func (h *Handler) Routes() chi.Router {
 	r.Group(func(protected chi.Router) {
 		protected.Use(platform.RequireAuth(h.tm))
 		protected.Get("/me", h.me)
+		protected.Patch("/me", h.updateMe)
+		protected.Patch("/me/password", h.changePassword)
 		protected.Get("/sessions", h.listSessions)
 		protected.Delete("/sessions/{id}", h.revokeSession)
 		protected.Post("/send-verification", h.sendVerification)
 		protected.Get("/me/profile", h.getProfile)
 		protected.Patch("/me/profile", h.updateProfile)
 		protected.Post("/me/profile/photo", h.uploadProfilePhoto)
+		protected.Get("/users/{userID}", h.getPublicIdentity)
 	})
 
 	return r
@@ -71,6 +75,7 @@ type registerRequest struct {
 	Email    *string `json:"email"`
 	Phone    *string `json:"phone"`
 	Password string  `json:"password"`
+	FullName string  `json:"full_name"`
 }
 
 type userResponse struct {
@@ -80,10 +85,12 @@ type userResponse struct {
 	Role        platform.Role `json:"role"`
 	Status      string        `json:"status"`
 	RoleID      *string       `json:"role_id,omitempty"`
+	FacilityID  *string       `json:"facility_id,omitempty"`
 	FullAccess  bool          `json:"full_access"`
 	Permissions []string      `json:"permissions,omitempty"`
 	Verified    bool          `json:"verified"`
 	VerifiedAt  *time.Time    `json:"verified_at,omitempty"`
+	FullName    *string       `json:"full_name,omitempty"`
 }
 
 func toUserResponse(u User, access Access) userResponse {
@@ -92,10 +99,15 @@ func toUserResponse(u User, access Access) userResponse {
 		s := access.RoleID.String()
 		roleID = &s
 	}
+	var facilityID *string
+	if access.FacilityID != nil {
+		s := access.FacilityID.String()
+		facilityID = &s
+	}
 	return userResponse{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone, Role: u.Role, Status: u.Status,
-		RoleID: roleID, FullAccess: access.FullAccess, Permissions: access.Permissions,
-		Verified: u.VerifiedAt != nil, VerifiedAt: u.VerifiedAt,
+		RoleID: roleID, FacilityID: facilityID, FullAccess: access.FullAccess, Permissions: access.Permissions,
+		Verified: u.VerifiedAt != nil, VerifiedAt: u.VerifiedAt, FullName: u.FullName,
 	}
 }
 
@@ -105,9 +117,13 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if strings.TrimSpace(req.FullName) == "" {
+		platform.WriteError(w, http.StatusBadRequest, "full_name is required")
+		return
+	}
 
 	user, err := h.service.Register(r.Context(), RegisterInput{
-		Email: req.Email, Phone: req.Phone, Password: req.Password,
+		Email: req.Email, Phone: req.Phone, Password: req.Password, FullName: req.FullName,
 	})
 	if err != nil {
 		if errors.Is(err, ErrDuplicateUser) {
@@ -259,7 +275,130 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 
 	platform.WriteJSON(w, http.StatusOK, toUserResponse(user, Access{
 		RoleID: claims.RoleID, FullAccess: claims.FullAccess, Permissions: claims.Permissions,
+		FacilityID: claims.FacilityID,
 	}))
+}
+
+type updateMeRequest struct {
+	FullName string `json:"full_name"`
+}
+
+// updateMe lets the caller change their own account-identity display name.
+// Distinct from PATCH /me/profile, which edits user_profiles (bio/photo/
+// languages/availability) — full_name lives on the users table itself.
+func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return
+	}
+
+	var req updateMeRequest
+	if err := platform.DecodeJSON(r, &req); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.FullName) == "" {
+		platform.WriteError(w, http.StatusBadRequest, "full_name is required")
+		return
+	}
+
+	user, err := h.service.UpdateFullName(r.Context(), claims.UserID, req.FullName)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+
+	platform.WriteJSON(w, http.StatusOK, toUserResponse(user, Access{
+		RoleID: claims.RoleID, FullAccess: claims.FullAccess, Permissions: claims.Permissions,
+		FacilityID: claims.FacilityID,
+	}))
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePassword lets a logged-in user change their own password, proving
+// they know the current one first (see Service.ChangePassword). Distinct
+// from the forgot/reset-password flow, which is for a locked-out user with
+// no valid session at all. A wrong current password is a 400 (a request
+// validation failure, not an auth failure at the request level — the
+// caller is already authenticated via their bearer token) rather than 401.
+// Every other one of the caller's sessions is revoked on success, same as
+// ResetPassword, so 204 is returned rather than a fresh token pair — the
+// caller's own current access token remains valid until it naturally
+// expires, but any other refresh token they held is now dead.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return
+	}
+
+	var req changePasswordRequest
+	if err := platform.DecodeJSON(r, &req); err != nil || req.CurrentPassword == "" || req.NewPassword == "" {
+		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.service.ChangePassword(r.Context(), claims.UserID, req.CurrentPassword, req.NewPassword); err != nil {
+		if errors.Is(err, ErrIncorrectCurrentPassword) {
+			platform.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ErrUserNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// publicIdentityResponse is a deliberately minimal "who is this" shape —
+// id, full_name, role only. Used to resolve a raw user UUID (shown e.g. in
+// a consult or message thread) into a readable name in the UI, without
+// exposing email, phone, status, or verification info the way userResponse
+// does. Kept as its own type rather than reusing/trimming userResponse so a
+// future field added to userResponse doesn't leak here by accident.
+type publicIdentityResponse struct {
+	ID       string        `json:"id"`
+	FullName *string       `json:"full_name,omitempty"`
+	Role     platform.Role `json:"role"`
+}
+
+// getPublicIdentity returns the minimal public-identity shape for any user
+// ID — authenticated (RequireAuth), but not scoped to any particular
+// permission, since this is read-only display data, not sensitive account
+// data. 404 if the ID doesn't resolve to a real user.
+func (h *Handler) getPublicIdentity(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "userID"))
+	if err != nil {
+		platform.WriteError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	user, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+
+	platform.WriteJSON(w, http.StatusOK, publicIdentityResponse{
+		ID: user.ID.String(), FullName: user.FullName, Role: user.Role,
+	})
 }
 
 type sessionResponse struct {

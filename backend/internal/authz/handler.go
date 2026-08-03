@@ -57,6 +57,16 @@ func (h *Handler) Routes() chi.Router {
 		g.Patch("/users/{userID}/status", h.updateUserStatus)
 	})
 
+	// Feature flags are a system_admin-only platform concern, gated by the
+	// legacy fixed-role check (RequireRoles) rather than the dynamic
+	// permission system the rest of this handler uses — same as
+	// audit.Handler's "GET /" browser route.
+	r.Group(func(g chi.Router) {
+		g.Use(platform.RequireRoles(platform.RoleSystemAdmin))
+		g.Get("/feature-flags", h.listFeatureFlags)
+		g.Patch("/feature-flags/{key}", h.setFeatureFlag)
+	})
+
 	return r
 }
 
@@ -236,6 +246,7 @@ type userResponse struct {
 	CreatedAt  string        `json:"created_at"`
 	RoleID     *string       `json:"role_id,omitempty"`
 	RoleName   *string       `json:"role_name,omitempty"`
+	FullName   *string       `json:"full_name,omitempty"`
 }
 
 func toUserResponse(u User) userResponse {
@@ -246,7 +257,7 @@ func toUserResponse(u User) userResponse {
 	}
 	return userResponse{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone, LegacyRole: u.LegacyRole, Status: u.Status,
-		CreatedAt: u.CreatedAt.Format(time.RFC3339), RoleID: roleID, RoleName: u.RoleName,
+		CreatedAt: u.CreatedAt.Format(time.RFC3339), RoleID: roleID, RoleName: u.RoleName, FullName: u.FullName,
 	}
 }
 
@@ -290,6 +301,7 @@ type createUserRequest struct {
 	FacilityID    *string       `json:"facility_id"`
 	Specialty     *string       `json:"specialty"`
 	LicenseNumber *string       `json:"license_number"`
+	FullName      *string       `json:"full_name"`
 }
 
 func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +313,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	input := CreateUserInput{
 		Email: req.Email, Phone: req.Phone, Password: req.Password, LegacyRole: req.LegacyRole,
-		Specialty: req.Specialty, LicenseNumber: req.LicenseNumber,
+		Specialty: req.Specialty, LicenseNumber: req.LicenseNumber, FullName: req.FullName,
 	}
 	if req.RoleID != nil {
 		id, err := uuid.Parse(*req.RoleID)
@@ -384,4 +396,57 @@ func (h *Handler) updateUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteJSON(w, http.StatusOK, toUserResponse(user))
+}
+
+type featureFlagResponse struct {
+	Key         string  `json:"key"`
+	Enabled     bool    `json:"enabled"`
+	Description *string `json:"description,omitempty"`
+	UpdatedAt   string  `json:"updated_at"`
+}
+
+func toFeatureFlagResponse(f FeatureFlag) featureFlagResponse {
+	return featureFlagResponse{Key: f.Key, Enabled: f.Enabled, Description: f.Description, UpdatedAt: f.UpdatedAt.Format(time.RFC3339)}
+}
+
+func (h *Handler) listFeatureFlags(w http.ResponseWriter, r *http.Request) {
+	flags, err := h.service.ListFeatureFlags(r.Context())
+	if err != nil {
+		platform.WriteError(w, http.StatusInternalServerError, "failed to list feature flags")
+		return
+	}
+	out := make([]featureFlagResponse, len(flags))
+	for i, f := range flags {
+		out[i] = toFeatureFlagResponse(f)
+	}
+	platform.WriteJSON(w, http.StatusOK, out)
+}
+
+type setFeatureFlagRequest struct {
+	Enabled     bool    `json:"enabled"`
+	Description *string `json:"description"`
+}
+
+// setFeatureFlag creates or updates the flag identified by the {key} path
+// param — an upsert, so both "define a brand-new flag" and "toggle an
+// existing one" go through the same route.
+func (h *Handler) setFeatureFlag(w http.ResponseWriter, r *http.Request) {
+	key := chi.URLParam(r, "key")
+	if key == "" {
+		platform.WriteError(w, http.StatusBadRequest, "invalid feature flag key")
+		return
+	}
+
+	var req setFeatureFlagRequest
+	if err := platform.DecodeJSON(r, &req); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	flag, err := h.service.SetFeatureFlag(r.Context(), key, req.Enabled, req.Description)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, toFeatureFlagResponse(flag))
 }

@@ -43,4 +43,16 @@ type User struct {
 	CreatedAt  time.Time
 	RoleID     *uuid.UUID
 	RoleName   *string
+	FullName   *string
+}
+
+// FeatureFlag is a simple platform-wide on/off switch, system_admin-only —
+// see Service.ListFeatureFlags / SetFeatureFlag. Folded into this module
+// rather than a new one, since "admin does administrative things" is
+// already this package's job.
+type FeatureFlag struct {
+	Key         string
+	Enabled     bool
+	Description *string
+	UpdatedAt   time.Time
 }

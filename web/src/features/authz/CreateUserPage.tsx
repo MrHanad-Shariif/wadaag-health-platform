@@ -25,6 +25,7 @@ export function CreateUserPage() {
   const rolesState = useFetch(() => listRoles(), [])
   const facilitiesState = useFetch(() => listFacilities(), [])
 
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [legacyRole, setLegacyRole] = useState<LegacyRole>('physician')
@@ -43,6 +44,7 @@ export function CreateUserPage() {
       await createUser({
         email,
         password,
+        full_name: fullName,
         legacy_role: legacyRole,
         role_id: roleId || undefined,
         facility_id: facilityId || undefined,
@@ -69,6 +71,9 @@ export function CreateUserPage() {
       />
 
       <form className="form" onSubmit={handleSubmit}>
+        <label htmlFor="fullName">Full name</label>
+        <input id="fullName" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+
         <label htmlFor="email">Email</label>
         <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
 

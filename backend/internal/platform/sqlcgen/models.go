@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppointmentStatus string
+
+const (
+	AppointmentStatusScheduled AppointmentStatus = "scheduled"
+	AppointmentStatusConfirmed AppointmentStatus = "confirmed"
+	AppointmentStatusCancelled AppointmentStatus = "cancelled"
+	AppointmentStatusCompleted AppointmentStatus = "completed"
+	AppointmentStatusNoShow    AppointmentStatus = "no_show"
+)
+
+func (e *AppointmentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppointmentStatus(s)
+	case string:
+		*e = AppointmentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppointmentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAppointmentStatus struct {
+	AppointmentStatus AppointmentStatus `json:"appointment_status"`
+	Valid             bool              `json:"valid"` // Valid is true if AppointmentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppointmentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppointmentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppointmentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppointmentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppointmentStatus), nil
+}
+
 type AuditResult string
 
 const (
@@ -220,6 +265,91 @@ func (ns NullConsentStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.ConsentStatus), nil
+}
+
+type ConsultStatus string
+
+const (
+	ConsultStatusRequested ConsultStatus = "requested"
+	ConsultStatusResponded ConsultStatus = "responded"
+	ConsultStatusClosed    ConsultStatus = "closed"
+)
+
+func (e *ConsultStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ConsultStatus(s)
+	case string:
+		*e = ConsultStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ConsultStatus: %T", src)
+	}
+	return nil
+}
+
+type NullConsultStatus struct {
+	ConsultStatus ConsultStatus `json:"consult_status"`
+	Valid         bool          `json:"valid"` // Valid is true if ConsultStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullConsultStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.ConsultStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ConsultStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullConsultStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ConsultStatus), nil
+}
+
+type ConversationType string
+
+const (
+	ConversationTypeDirect ConversationType = "direct"
+	ConversationTypeGroup  ConversationType = "group"
+)
+
+func (e *ConversationType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ConversationType(s)
+	case string:
+		*e = ConversationType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ConversationType: %T", src)
+	}
+	return nil
+}
+
+type NullConversationType struct {
+	ConversationType ConversationType `json:"conversation_type"`
+	Valid            bool             `json:"valid"` // Valid is true if ConversationType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullConversationType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ConversationType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ConversationType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullConversationType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ConversationType), nil
 }
 
 type EncounterType string
@@ -491,6 +621,34 @@ func (ns NullUserRole) Value() (driver.Value, error) {
 	return string(ns.UserRole), nil
 }
 
+type Appointment struct {
+	ID             pgtype.UUID        `json:"id"`
+	PatientID      pgtype.UUID        `json:"patient_id"`
+	ProviderID     pgtype.UUID        `json:"provider_id"`
+	FacilityID     pgtype.UUID        `json:"facility_id"`
+	StartAt        pgtype.Timestamptz `json:"start_at"`
+	EndAt          pgtype.Timestamptz `json:"end_at"`
+	Status         AppointmentStatus  `json:"status"`
+	Reason         pgtype.Text        `json:"reason"`
+	ReminderSentAt pgtype.Timestamptz `json:"reminder_sent_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Attachment struct {
+	ID          pgtype.UUID        `json:"id"`
+	PatientID   pgtype.UUID        `json:"patient_id"`
+	EncounterID pgtype.UUID        `json:"encounter_id"`
+	UploadedBy  pgtype.UUID        `json:"uploaded_by"`
+	FileKey     string             `json:"file_key"`
+	Filename    string             `json:"filename"`
+	MimeType    string             `json:"mime_type"`
+	Size        int64              `json:"size"`
+	Version     int32              `json:"version"`
+	RootID      pgtype.UUID        `json:"root_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID           pgtype.UUID        `json:"id"`
 	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
@@ -537,6 +695,41 @@ type ConsentGrant struct {
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 }
 
+type Consultation struct {
+	ID                   pgtype.UUID        `json:"id"`
+	PatientID            pgtype.UUID        `json:"patient_id"`
+	RequestingProviderID pgtype.UUID        `json:"requesting_provider_id"`
+	TargetProviderID     pgtype.UUID        `json:"target_provider_id"`
+	Reason               string             `json:"reason"`
+	Status               ConsultStatus      `json:"status"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ConsultationMessage struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConsultationID pgtype.UUID        `json:"consultation_id"`
+	SenderID       pgtype.UUID        `json:"sender_id"`
+	Body           string             `json:"body"`
+	AttachmentIds  []pgtype.UUID      `json:"attachment_ids"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type Conversation struct {
+	ID        pgtype.UUID        `json:"id"`
+	Type      ConversationType   `json:"type"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ConversationMember struct {
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	LastReadAt     pgtype.Timestamptz `json:"last_read_at"`
+	JoinedAt       pgtype.Timestamptz `json:"joined_at"`
+}
+
 type Department struct {
 	ID         pgtype.UUID        `json:"id"`
 	FacilityID pgtype.UUID        `json:"facility_id"`
@@ -568,17 +761,49 @@ type Encounter struct {
 }
 
 type Facility struct {
-	ID           pgtype.UUID        `json:"id"`
-	Name         string             `json:"name"`
-	Type         FacilityType       `json:"type"`
-	Region       pgtype.Text        `json:"region"`
-	District     pgtype.Text        `json:"district"`
-	Phone        pgtype.Text        `json:"phone"`
-	Address      pgtype.Text        `json:"address"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	LogoUrl      pgtype.Text        `json:"logo_url"`
-	WorkingHours []byte             `json:"working_hours"`
+	ID               pgtype.UUID        `json:"id"`
+	Name             string             `json:"name"`
+	Type             FacilityType       `json:"type"`
+	Region           pgtype.Text        `json:"region"`
+	District         pgtype.Text        `json:"district"`
+	Phone            pgtype.Text        `json:"phone"`
+	Address          pgtype.Text        `json:"address"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	LogoUrl          pgtype.Text        `json:"logo_url"`
+	WorkingHours     []byte             `json:"working_hours"`
+	ReferralPolicies pgtype.Text        `json:"referral_policies"`
+}
+
+type FeatureFlag struct {
+	Key         string             `json:"key"`
+	Enabled     bool               `json:"enabled"`
+	Description pgtype.Text        `json:"description"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Message struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	SenderID       pgtype.UUID        `json:"sender_id"`
+	Body           string             `json:"body"`
+	AttachmentIds  []pgtype.UUID      `json:"attachment_ids"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type Notification struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Type      string             `json:"type"`
+	Payload   []byte             `json:"payload"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type NotificationPreference struct {
+	UserID  pgtype.UUID `json:"user_id"`
+	Channel string      `json:"channel"`
+	Enabled bool        `json:"enabled"`
 }
 
 type PasswordResetToken struct {
@@ -596,7 +821,6 @@ type Patient struct {
 	FullName    string             `json:"full_name"`
 	DateOfBirth pgtype.Date        `json:"date_of_birth"`
 	Sex         pgtype.Text        `json:"sex"`
-	NationalID  pgtype.Text        `json:"national_id"`
 	Phone       pgtype.Text        `json:"phone"`
 	Address     pgtype.Text        `json:"address"`
 	NextOfKin   pgtype.Text        `json:"next_of_kin"`
@@ -605,20 +829,21 @@ type Patient struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Gender      pgtype.Text        `json:"gender"`
 	BloodGroup  pgtype.Text        `json:"blood_group"`
+	NationalID  []byte             `json:"national_id"`
 }
 
 type PatientMedicalHistory struct {
 	ID                 pgtype.UUID        `json:"id"`
 	PatientID          pgtype.UUID        `json:"patient_id"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	Allergies          []byte             `json:"allergies"`
 	ChronicConditions  []byte             `json:"chronic_conditions"`
 	CurrentMedications []byte             `json:"current_medications"`
 	PastSurgeries      []byte             `json:"past_surgeries"`
 	FamilyHistory      []byte             `json:"family_history"`
 	VaccinationHistory []byte             `json:"vaccination_history"`
-	UpdatedBy          pgtype.UUID        `json:"updated_by"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Permission struct {
@@ -642,6 +867,15 @@ type Provider struct {
 	Languages          []string           `json:"languages"`
 	Certificates       []byte             `json:"certificates"`
 	AreasOfExpertise   []string           `json:"areas_of_expertise"`
+}
+
+type ProviderAvailability struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProviderID pgtype.UUID        `json:"provider_id"`
+	Weekday    int16              `json:"weekday"`
+	StartTime  pgtype.Time        `json:"start_time"`
+	EndTime    pgtype.Time        `json:"end_time"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type Referral struct {
@@ -697,6 +931,15 @@ type RolePermission struct {
 	PermissionID pgtype.UUID `json:"permission_id"`
 }
 
+type SavedSearch struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	Query     string             `json:"query"`
+	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type User struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        pgtype.Text        `json:"email"`
@@ -708,6 +951,7 @@ type User struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	RoleID       pgtype.UUID        `json:"role_id"`
 	VerifiedAt   pgtype.Timestamptz `json:"verified_at"`
+	FullName     pgtype.Text        `json:"full_name"`
 }
 
 type UserProfile struct {

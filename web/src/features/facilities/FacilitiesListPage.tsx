@@ -10,7 +10,11 @@ import type { Facility } from './types'
 export function FacilitiesListPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const canManage = user?.role === 'system_admin' || user?.role === 'hospital_admin'
+  // Facility creation is a platform-level action (onboarding a new
+  // hospital), restricted to system_admin server-side — a hospital_admin
+  // has at most one facility already and creating another isn't "managing
+  // their own facility." See requireFacilityAccess in the Go handler.
+  const canCreate = user?.role === 'system_admin'
   const state = useFetch(() => listFacilities(), [])
 
   const columns: DataTableColumn<Facility>[] = [
@@ -50,7 +54,7 @@ export function FacilitiesListPage() {
         title="Facilities"
         description="Hospitals, clinics, labs, pharmacies, and insurers registered on the platform."
         actions={
-          canManage ? (
+          canCreate ? (
             <Link className="button-link" to="/facilities/new">
               <Plus size={16} aria-hidden="true" />
               New facility

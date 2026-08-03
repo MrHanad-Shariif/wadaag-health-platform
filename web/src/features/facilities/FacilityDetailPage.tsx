@@ -25,7 +25,12 @@ export function FacilityDetailPage() {
   const { facilityId } = useParams<{ facilityId: string }>()
   const { user } = useAuth()
   const { show } = useToast()
-  const canManage = user?.role === 'system_admin' || user?.role === 'hospital_admin'
+  // Mirrors requireFacilityAccess on the backend: system_admin manages any
+  // facility, a hospital_admin only theirs (matched by facility_id from the
+  // /me response — see auth/types.ts). Attempting to edit a facility this
+  // doesn't allow would 403 server-side anyway; this just avoids offering
+  // controls that only fail.
+  const canManage = user?.role === 'system_admin' || (user?.role === 'hospital_admin' && user.facility_id === facilityId)
 
   const facilityState = useFetch(() => getFacility(facilityId!), [facilityId])
 
@@ -74,6 +79,7 @@ export function FacilityDetailPage() {
         facilityId={facilityId!}
         logoUrl={facility.logo_url}
         workingHours={facility.working_hours}
+        referralPolicies={facility.referral_policies}
         canManage={canManage}
         onSaved={() => {
           facilityState.reload()
@@ -91,12 +97,14 @@ function LogoAndHoursSection({
   facilityId,
   logoUrl,
   workingHours,
+  referralPolicies,
   canManage,
   onSaved,
 }: {
   facilityId: string
   logoUrl?: string
   workingHours?: WorkingHours
+  referralPolicies?: string
   canManage: boolean
   onSaved: () => void
 }) {
@@ -105,6 +113,7 @@ function LogoAndHoursSection({
   const [hours, setHours] = useState<Record<WeekdayKey, { enabled: boolean; open: string; close: string }>>(() =>
     buildHoursState(workingHours),
   )
+  const [referralPoliciesInput, setReferralPoliciesInput] = useState(referralPolicies ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -120,6 +129,7 @@ function LogoAndHoursSection({
   function startEditing() {
     setLogoInput(logoUrl ?? '')
     setHours(buildHoursState(workingHours))
+    setReferralPoliciesInput(referralPolicies ?? '')
     setError(null)
     setEditing(true)
   }
@@ -142,7 +152,11 @@ function LogoAndHoursSection({
         const day = hours[key]
         if (day.enabled) working_hours[key] = { open: day.open, close: day.close }
       }
-      await updateFacility(facilityId, { logo_url: logoInput || undefined, working_hours })
+      await updateFacility(facilityId, {
+        logo_url: logoInput || undefined,
+        working_hours,
+        referral_policies: referralPoliciesInput,
+      })
       setEditing(false)
       onSaved()
     } catch (err) {
@@ -180,6 +194,13 @@ function LogoAndHoursSection({
           ) : (
             <p className="empty-state">No working hours set.</p>
           )}
+
+          <dl className="detail-grid">
+            <dt>Referral policies</dt>
+            <dd className={referralPolicies ? 'detail-grid__dd--pre' : undefined}>
+              {referralPolicies ?? <span className="empty-state">No referral policies set.</span>}
+            </dd>
+          </dl>
 
           {canManage && (
             <button type="button" className="button-link" onClick={startEditing}>
@@ -219,6 +240,14 @@ function LogoAndHoursSection({
               />
             </label>
           ))}
+
+          <label htmlFor="referralPolicies">Referral policies</label>
+          <textarea
+            id="referralPolicies"
+            value={referralPoliciesInput}
+            onChange={(e) => setReferralPoliciesInput(e.target.value)}
+            placeholder="Describe how this facility accepts and routes referrals…"
+          />
 
           {error && (
             <p role="alert" className="form-error">

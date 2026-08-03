@@ -17,18 +17,31 @@ import { EncounterDetailPage } from './features/records/EncounterDetailPage'
 import { ReferralsInboxPage } from './features/referrals/ReferralsInboxPage'
 import { NewReferralPage } from './features/referrals/NewReferralPage'
 import { ReferralDetailPage } from './features/referrals/ReferralDetailPage'
+import { ConsultsInboxPage } from './features/consults/ConsultsInboxPage'
+import { NewConsultPage } from './features/consults/NewConsultPage'
+import { ConsultDetailPage } from './features/consults/ConsultDetailPage'
+import { ConversationsListPage } from './features/messaging/ConversationsListPage'
+import { NewConversationPage } from './features/messaging/NewConversationPage'
+import { ConversationThreadPage } from './features/messaging/ConversationThreadPage'
 import { UsersListPage } from './features/authz/UsersListPage'
 import { CreateUserPage } from './features/authz/CreateUserPage'
 import { UserDetailPage } from './features/authz/UserDetailPage'
 import { RolesListPage } from './features/authz/RolesListPage'
 import { RoleFormPage } from './features/authz/RoleFormPage'
 import { PatientsListPage } from './features/records/PatientsListPage'
-import { SessionsPage } from './features/auth/SessionsPage'
 import { ProfileEditPage } from './features/profile/ProfileEditPage'
 import { FacilitiesListPage } from './features/facilities/FacilitiesListPage'
 import { NewFacilityPage } from './features/facilities/NewFacilityPage'
 import { FacilityDetailPage } from './features/facilities/FacilityDetailPage'
 import { ProviderProfilePage } from './features/providers/ProviderProfilePage'
+import { SearchResultsPage } from './features/search/SearchResultsPage'
+import { AppointmentsListPage } from './features/appointments/AppointmentsListPage'
+import { BookAppointmentPage } from './features/appointments/BookAppointmentPage'
+import { AppointmentDetailPage } from './features/appointments/AppointmentDetailPage'
+import { AvailabilityEditorPage } from './features/appointments/AvailabilityEditorPage'
+import { SettingsPage } from './features/settings/SettingsPage'
+import { AuditLogPage } from './features/audit/AuditLogPage'
+import { FeatureFlagsPage } from './features/authz/FeatureFlagsPage'
 import './App.css'
 
 // AuthGate renders the login/signup state-switch flow at "/" for a signed
@@ -78,12 +91,23 @@ function AppShell() {
             <Route path="referrals" element={<ReferralsInboxPage />} />
             <Route path="referrals/new" element={<NewReferralPage />} />
             <Route path="referrals/:referralId" element={<ReferralDetailPage />} />
+            <Route path="consults" element={<ConsultsInboxPage />} />
+            <Route path="consults/new" element={<NewConsultPage />} />
+            <Route path="consults/:consultationId" element={<ConsultDetailPage />} />
+            <Route path="messages" element={<ConversationsListPage />} />
+            <Route path="messages/new" element={<NewConversationPage />} />
+            <Route path="messages/:conversationId" element={<ConversationThreadPage />} />
             <Route path="patients" element={<PatientsListPage />} />
             <Route path="facilities" element={<FacilitiesListPage />} />
             <Route path="facilities/new" element={<NewFacilityPage />} />
             <Route path="facilities/:facilityId" element={<FacilityDetailPage />} />
             <Route path="providers/me" element={<ProviderProfilePage />} />
             <Route path="providers/:providerId" element={<ProviderProfilePage />} />
+            <Route path="appointments" element={<AppointmentsListPage />} />
+            <Route path="appointments/book" element={<BookAppointmentPage />} />
+            <Route path="appointments/availability" element={<AvailabilityEditorPage />} />
+            <Route path="appointments/:appointmentId" element={<AppointmentDetailPage />} />
+            <Route path="search" element={<SearchResultsPage />} />
             <Route path="authentication/users" element={<UsersListPage />} />
             <Route path="authentication/users/new" element={<CreateUserPage />} />
             <Route path="authentication/users/:userID" element={<UserDetailPage />} />
@@ -91,8 +115,10 @@ function AppShell() {
             <Route path="authentication/roles/new" element={<RoleFormPage />} />
             <Route path="authentication/roles/:roleID" element={<RoleFormPage />} />
             <Route path="profile" element={<ProfileEditPage />} />
-            {/* Phase 0 stub — move under Settings once Phase 9 lands. */}
-            <Route path="settings/sessions" element={<SessionsPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/:tab" element={<SettingsPage />} />
+            <Route path="admin/audit" element={<AuditLogPage />} />
+            <Route path="admin/feature-flags" element={<FeatureFlagsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

@@ -7,6 +7,7 @@ import { useFetch } from '../../shared/useFetch'
 import { LoadingState, ErrorState } from '../../shared/StatusMessage'
 import { initials } from '../../shared/avatar'
 import { useAuth } from '../auth/useAuth'
+import { updateFullName } from '../auth/api'
 import { getMyProfile, updateMyProfile, uploadMyProfilePhoto } from './api'
 import type { Profile } from './types'
 
@@ -22,7 +23,7 @@ function photoSrc(photoUrl: string | null): string | null {
 }
 
 export function ProfileEditPage() {
-  const { user } = useAuth()
+  const { user, updateUser } = useAuth()
   const { show } = useToast()
   const state = useFetch(() => getMyProfile(), [])
 
@@ -35,6 +36,17 @@ export function ProfileEditPage() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Account-identity full name — a separate concern/table from the profile
+  // data below, saved via its own PATCH /auth/me call rather than
+  // updateMyProfile.
+  const [fullName, setFullName] = useState(user?.full_name ?? '')
+  const [savingName, setSavingName] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setFullName(user?.full_name ?? '')
+  }, [user?.full_name])
 
   useEffect(() => {
     if (!state.data) return
@@ -67,6 +79,21 @@ export function ProfileEditPage() {
     }
   }
 
+  async function handleNameSubmit(e: FormEvent) {
+    e.preventDefault()
+    setNameError(null)
+    setSavingName(true)
+    try {
+      const updated = await updateFullName(fullName)
+      updateUser(updated)
+      show('Name updated')
+    } catch (err) {
+      setNameError(err instanceof ApiError ? err.message : 'Could not update name.')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
   async function handlePhotoSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -95,12 +122,27 @@ export function ProfileEditPage() {
   if (state.error) return <ErrorState message={state.error} />
   if (!profile) return null
 
-  const name = user?.email ?? user?.phone ?? 'Account'
+  const name = user?.full_name ?? user?.email ?? user?.phone ?? 'Account'
   const avatarUrl = photoSrc(profile.photo_url)
 
   return (
     <div className="page page--narrow">
-      <PageHeader eyebrow="Account" title="Edit profile" description="Update your bio, languages, availability, and photo." />
+      <PageHeader eyebrow="Account" title="Edit profile" description="Update your name, bio, languages, availability, and photo." />
+
+      <form className="form" onSubmit={handleNameSubmit}>
+        <label htmlFor="fullName">Full name</label>
+        <input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+
+        {nameError && (
+          <p role="alert" className="form-error">
+            {nameError}
+          </p>
+        )}
+
+        <button type="submit" disabled={savingName}>
+          {savingName ? 'Saving…' : 'Save name'}
+        </button>
+      </form>
 
       <div className="profile-page__photo-section">
         <div className="profile-page__avatar">

@@ -12,82 +12,238 @@ import (
 
 type Querier interface {
 	AcceptReferral(ctx context.Context, arg AcceptReferralParams) (Referral, error)
+	AddConversationMember(ctx context.Context, arg AddConversationMemberParams) error
 	CountEncounters(ctx context.Context) (int64, error)
+	// Powers the physician-specific dashboard view's "patients seen today"
+	// count (see dashboard.Summary.PatientsTodayCount) — encounters this
+	// provider recorded whose occurred_at falls on the current calendar date.
+	CountEncountersForProviderToday(ctx context.Context, providerID pgtype.UUID) (int64, error)
 	CountFacilities(ctx context.Context) (int64, error)
 	CountPatients(ctx context.Context) (int64, error)
+	// Consultations where provider_id is the target and awaiting their first
+	// reply — used by the physician-specific dashboard view (see
+	// dashboard.Summary.PendingConsultCount).
+	CountPendingConsultsForProvider(ctx context.Context, providerID pgtype.UUID) (int64, error)
+	// Powers the admin dashboard's "most active doctors" panel — ranks
+	// providers by how many referrals have been routed to them as the
+	// receiving_provider_id (only ever set once a referral has been accepted,
+	// see AcceptReferral), across every status, most-referred first.
+	CountReferralsByReceivingProvider(ctx context.Context, resultLimit int32) ([]CountReferralsByReceivingProviderRow, error)
 	CountReferralsByStatus(ctx context.Context) ([]CountReferralsByStatusRow, error)
+	// "Actionable" referrals currently assigned to a provider as the receiving
+	// provider: accepted (about to start) or in_progress (already started but
+	// not yet completed). Used by the physician-specific dashboard view (see
+	// dashboard.Summary.MyReferralsPendingCount).
+	CountReferralsPendingForProvider(ctx context.Context, providerID pgtype.UUID) (int64, error)
+	CountUnreadNotifications(ctx context.Context, userID pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
+	CreateAppointment(ctx context.Context, arg CreateAppointmentParams) (Appointment, error)
+	CreateAttachment(ctx context.Context, arg CreateAttachmentParams) (Attachment, error)
+	CreateAvailability(ctx context.Context, arg CreateAvailabilityParams) (ProviderAvailability, error)
 	CreateBranch(ctx context.Context, arg CreateBranchParams) (Branch, error)
 	CreateClinicalObservation(ctx context.Context, arg CreateClinicalObservationParams) (ClinicalObservation, error)
 	CreateConsentGrant(ctx context.Context, arg CreateConsentGrantParams) (ConsentGrant, error)
+	CreateConsultation(ctx context.Context, arg CreateConsultationParams) (Consultation, error)
+	CreateConsultationMessage(ctx context.Context, arg CreateConsultationMessageParams) (ConsultationMessage, error)
+	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
 	CreateDepartment(ctx context.Context, arg CreateDepartmentParams) (Department, error)
 	CreateEmailVerificationToken(ctx context.Context, arg CreateEmailVerificationTokenParams) (EmailVerificationToken, error)
 	CreateEncounter(ctx context.Context, arg CreateEncounterParams) (Encounter, error)
 	CreateFacility(ctx context.Context, arg CreateFacilityParams) (Facility, error)
+	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
+	CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error)
 	CreatePasswordResetToken(ctx context.Context, arg CreatePasswordResetTokenParams) (PasswordResetToken, error)
-	CreatePatient(ctx context.Context, arg CreatePatientParams) (Patient, error)
+	// national_id is encrypted at rest (pgcrypto pgp_sym_encrypt) — see
+	// db/migrations/0024_encrypt_sensitive_columns.up.sql. The key is supplied
+	// by the application on every call, never a DB-level setting.
+	CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error)
 	CreateProvider(ctx context.Context, arg CreateProviderParams) (Provider, error)
 	CreateReferral(ctx context.Context, arg CreateReferralParams) (Referral, error)
 	CreateReferralStatusEvent(ctx context.Context, arg CreateReferralStatusEventParams) (ReferralStatusEvent, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error)
+	CreateSavedSearch(ctx context.Context, arg CreateSavedSearchParams) (SavedSearch, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// Scoped to the owning provider so one provider can't delete another's
+	// availability row — see appointments.Service.DeleteAvailability.
+	DeleteAvailability(ctx context.Context, arg DeleteAvailabilityParams) error
 	DeleteBranch(ctx context.Context, id pgtype.UUID) error
 	DeleteDepartment(ctx context.Context, id pgtype.UUID) error
 	DeleteRole(ctx context.Context, id pgtype.UUID) error
+	DeleteSavedSearch(ctx context.Context, arg DeleteSavedSearchParams) (int64, error)
 	FindActiveGrants(ctx context.Context, arg FindActiveGrantsParams) ([]ConsentGrant, error)
+	FindAppointmentByID(ctx context.Context, id pgtype.UUID) (Appointment, error)
+	FindAttachmentByID(ctx context.Context, id pgtype.UUID) (Attachment, error)
 	FindBranchByID(ctx context.Context, id pgtype.UUID) (Branch, error)
+	FindConsultationByID(ctx context.Context, id pgtype.UUID) (Consultation, error)
+	FindConversationMember(ctx context.Context, arg FindConversationMemberParams) (ConversationMember, error)
 	FindDepartmentByID(ctx context.Context, id pgtype.UUID) (Department, error)
+	// De-duplicates direct conversations — reuse the existing 1:1 conversation
+	// between two users instead of creating a new one every time.
+	FindDirectConversationBetween(ctx context.Context, arg FindDirectConversationBetweenParams) (Conversation, error)
 	FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (EmailVerificationToken, error)
 	FindEncounterByID(ctx context.Context, id pgtype.UUID) (Encounter, error)
 	FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facility, error)
+	FindMaxAttachmentVersionByRoot(ctx context.Context, rootID pgtype.UUID) (int32, error)
 	FindPasswordResetTokenByHash(ctx context.Context, tokenHash string) (PasswordResetToken, error)
-	FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient, error)
+	// SELECT * would return national_id's raw encrypted bytes — explicit column
+	// list so national_id can be decrypted in-query instead (see CreatePatient's
+	// comment on why the key is a query param, not a DB-level setting).
+	FindPatientByID(ctx context.Context, arg FindPatientByIDParams) (FindPatientByIDRow, error)
+	// The reverse of FindPatientByID: resolves a patient-role user's own
+	// patient_id from their user_id, e.g. so a patient can book their own
+	// appointment (see records.Service.GetOwnPatientRecord /
+	// appointments.Service.Book).
+	FindPatientByUserID(ctx context.Context, arg FindPatientByUserIDParams) (FindPatientByUserIDRow, error)
 	// Returns pgx.ErrNoRows if no row exists yet — expected (a patient with no
 	// medical history recorded), handled in the repository layer, not an error
 	// condition.
-	FindPatientMedicalHistoryByPatientID(ctx context.Context, patientID pgtype.UUID) (PatientMedicalHistory, error)
+	FindPatientMedicalHistoryByPatientID(ctx context.Context, arg FindPatientMedicalHistoryByPatientIDParams) (FindPatientMedicalHistoryByPatientIDRow, error)
 	FindProviderByID(ctx context.Context, id pgtype.UUID) (Provider, error)
 	FindProviderByUserID(ctx context.Context, userID pgtype.UUID) (Provider, error)
 	FindReferralByID(ctx context.Context, id pgtype.UUID) (Referral, error)
 	FindRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	FindRoleByID(ctx context.Context, id pgtype.UUID) (Role, error)
+	FindSavedSearchByID(ctx context.Context, id pgtype.UUID) (SavedSearch, error)
 	FindUserByEmailOrPhone(ctx context.Context, email pgtype.Text) (User, error)
 	FindUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	FindUserWithRoleByID(ctx context.Context, id pgtype.UUID) (FindUserWithRoleByIDRow, error)
+	GetNotificationPreferences(ctx context.Context, userID pgtype.UUID) ([]NotificationPreference, error)
 	GetUserAccess(ctx context.Context, id pgtype.UUID) (GetUserAccessRow, error)
 	GetUserProfile(ctx context.Context, userID pgtype.UUID) (UserProfile, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	InsertRolePermissions(ctx context.Context, arg InsertRolePermissionsParams) error
 	ListActiveRefreshTokensForUser(ctx context.Context, userID pgtype.UUID) ([]RefreshToken, error)
+	// Platform-wide oversight listing — system_admin has no provider identity
+	// to scope ListConsultationsForProvider by, so its inbox view needs an
+	// unscoped list instead.
+	ListAllConsultations(ctx context.Context) ([]Consultation, error)
+	// Platform-wide oversight listing — system_admin has no facility affiliation
+	// of its own to scope ListReferralsForFacility by, so its inbox view needs
+	// an unscoped list instead.
+	ListAllReferrals(ctx context.Context) ([]Referral, error)
+	ListAppointmentsForPatient(ctx context.Context, patientID pgtype.UUID) ([]Appointment, error)
+	// Overlap check: any appointment that isn't cancelled whose interval
+	// intersects [range_start, range_end). Used both for slot-generation's
+	// overlap filter and for a provider's own calendar view.
+	ListAppointmentsForProviderInRange(ctx context.Context, arg ListAppointmentsForProviderInRangeParams) ([]Appointment, error)
+	// rootID must already be resolved to the true root (the id shared by
+	// COALESCE(root_id, id) across the whole lineage) — see
+	// Service.resolveRootID.
+	ListAttachmentVersionsByRoot(ctx context.Context, rootID pgtype.UUID) ([]Attachment, error)
+	// General, filtered listing for the system_admin-only audit browser (see
+	// audit.Handler's "GET /" route) — every filter is optional; a NULL/absent
+	// arg matches every row for that column. result_limit is always supplied
+	// by the caller (audit.Service caps it before it ever reaches here, see
+	// Service.ListEntries).
+	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]AuditLog, error)
 	ListAuditLogForPatient(ctx context.Context, patientID pgtype.UUID) ([]AuditLog, error)
+	ListAvailabilityForProvider(ctx context.Context, providerID pgtype.UUID) ([]ProviderAvailability, error)
 	ListBranchesByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Branch, error)
 	ListConsentGrantsForPatient(ctx context.Context, patientID pgtype.UUID) ([]ConsentGrant, error)
+	ListConsultationMessages(ctx context.Context, consultationID pgtype.UUID) ([]ConsultationMessage, error)
+	ListConsultationsForProvider(ctx context.Context, requestingProviderID pgtype.UUID) ([]Consultation, error)
+	ListConversationMembers(ctx context.Context, conversationID pgtype.UUID) ([]ConversationMember, error)
+	// Includes a last-message preview via LATERAL join so the conversation list
+	// can show it without N+1 queries. Also surfaces the caller's own
+	// last_read_at (via the join condition, m is always the caller's own
+	// membership row) and, for direct conversations, the other member's user_id
+	// (via another LATERAL join) so the UI has someone to label the thread
+	// with instead of just created_by, which is meaningless when the caller
+	// didn't create it.
+	ListConversationsForUser(ctx context.Context, userID pgtype.UUID) ([]ListConversationsForUserRow, error)
 	ListDepartmentsByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Department, error)
 	ListEncountersByPatient(ctx context.Context, patientID pgtype.UUID) ([]Encounter, error)
 	ListFacilities(ctx context.Context) ([]Facility, error)
+	ListFeatureFlags(ctx context.Context) ([]FeatureFlag, error)
+	// One row per logical document — the highest-version row within each
+	// root_id/id lineage (COALESCE(root_id, id) groups a root row together with
+	// every version that points back at it).
+	ListLatestAttachmentsByPatient(ctx context.Context, patientID pgtype.UUID) ([]Attachment, error)
+	ListNotificationsForUser(ctx context.Context, userID pgtype.UUID) ([]Notification, error)
 	ListObservationsByEncounter(ctx context.Context, encounterID pgtype.UUID) ([]ClinicalObservation, error)
-	ListPatients(ctx context.Context) ([]Patient, error)
+	ListPatients(ctx context.Context, encryptionKey string) ([]ListPatientsRow, error)
 	ListPermissions(ctx context.Context) ([]Permission, error)
 	ListPermissionsForRole(ctx context.Context, roleID pgtype.UUID) ([]Permission, error)
+	// Returns the most recent 200 messages oldest-first: the inner query picks
+	// the latest 200 by created_at DESC, then the outer query re-orders that
+	// subset ascending. Plain "ORDER BY created_at ASC LIMIT 200" would instead
+	// return the OLDEST 200 messages, which is wrong for a chat history view.
+	ListRecentMessages(ctx context.Context, conversationID pgtype.UUID) ([]Message, error)
 	ListReferralStatusEvents(ctx context.Context, referralID pgtype.UUID) ([]ReferralStatusEvent, error)
 	ListReferralsByPatient(ctx context.Context, patientID pgtype.UUID) ([]Referral, error)
 	ListReferralsForFacility(ctx context.Context, receivingFacilityID pgtype.UUID) ([]Referral, error)
 	ListRoles(ctx context.Context) ([]Role, error)
+	ListSavedSearchesForUser(ctx context.Context, userID pgtype.UUID) ([]SavedSearch, error)
+	ListUpcomingUnreminded(ctx context.Context) ([]Appointment, error)
 	ListUsersWithRole(ctx context.Context) ([]ListUsersWithRoleRow, error)
+	MarkAllNotificationsRead(ctx context.Context, userID pgtype.UUID) error
+	MarkConversationRead(ctx context.Context, arg MarkConversationReadParams) error
 	MarkEmailVerificationTokenUsed(ctx context.Context, id pgtype.UUID) error
+	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkPasswordResetTokenUsed(ctx context.Context, id pgtype.UUID) error
+	MarkReminderSent(ctx context.Context, id pgtype.UUID) error
 	MarkUserVerified(ctx context.Context, id pgtype.UUID) error
 	ReplaceRolePermissions(ctx context.Context, roleID pgtype.UUID) error
 	RevokeAllRefreshTokensForUser(ctx context.Context, userID pgtype.UUID) error
 	RevokeConsentGrant(ctx context.Context, arg RevokeConsentGrantParams) (ConsentGrant, error)
 	RevokeRefreshToken(ctx context.Context, id pgtype.UUID) error
 	RevokeRefreshTokenForUser(ctx context.Context, arg RevokeRefreshTokenForUserParams) (int64, error)
+	// Text-filtered variant of ListAllConsultations — system_admin oversight
+	// only, same as its unfiltered counterpart.
+	SearchAllConsultations(ctx context.Context, arg SearchAllConsultationsParams) ([]Consultation, error)
+	// Text-filtered variant of ListAllReferrals — system_admin oversight only,
+	// same as its unfiltered counterpart.
+	SearchAllReferrals(ctx context.Context, arg SearchAllReferralsParams) ([]Referral, error)
+	// Text-filtered variant of ListConsultationsForProvider — same
+	// requesting-or-target-provider scoping, just with a reason ILIKE filter
+	// added, so search never surfaces a consultation the caller isn't already
+	// a party to.
+	SearchConsultationsForProvider(ctx context.Context, arg SearchConsultationsForProviderParams) ([]Consultation, error)
+	// Directory-style search, open to any authenticated user (no sensitive
+	// data on a facility's name/region/district) — see search.Service.Search.
+	SearchFacilities(ctx context.Context, arg SearchFacilitiesParams) ([]Facility, error)
+	// Facility-scoped patient search: only patients this facility already has
+	// an active, unexpired consent grant for (the same boundary
+	// consent.Checker.HasAccess enforces for a single patient) are
+	// discoverable — a physician/hospital_admin cannot use search to find a
+	// patient at another facility they have no standing or referral-driven
+	// access to. See records.Service.SearchPatients.
+	// national_id is deliberately NOT matched here — see SearchPatientsUnscoped's
+	// comment on why an encrypted column can't support partial/exact-match
+	// search without a separate deterministic hash column (out of scope).
+	SearchPatientsForFacility(ctx context.Context, arg SearchPatientsForFacilityParams) ([]SearchPatientsForFacilityRow, error)
+	// Unscoped patient-directory search — same "bypasses consent grants"
+	// caveat as ListPatients, so callers must gate this to system_admin only
+	// (see records.Service.SearchPatients / search.Service.Search).
+	// national_id is deliberately NOT matched here: it's encrypted at rest with
+	// a non-deterministic cipher (pgp_sym_encrypt produces different ciphertext
+	// for the same plaintext on every call), so there's no way to ILIKE-match
+	// or even exact-match it without a separate deterministic hash column,
+	// which is out of scope for this task. This is an accepted capability loss
+	// — national_id is no longer searchable, only full_name/phone are.
+	SearchPatientsUnscoped(ctx context.Context, arg SearchPatientsUnscopedParams) ([]SearchPatientsUnscopedRow, error)
+	// Directory-style doctor search by the user's full_name or the provider's
+	// specialty — open to any authenticated user, same reasoning as
+	// SearchFacilities. Joins users only to read full_name; no other
+	// user fields are exposed.
+	SearchProviders(ctx context.Context, arg SearchProvidersParams) ([]SearchProvidersRow, error)
+	// Text-filtered variant of ListReferralsForFacility — same
+	// receiving_facility_id scoping, just with a reason ILIKE filter added, so
+	// search never sees referrals outside a facility's existing inbox.
+	SearchReferralsForFacility(ctx context.Context, arg SearchReferralsForFacilityParams) ([]Referral, error)
 	SetUserProfilePresence(ctx context.Context, arg SetUserProfilePresenceParams) error
+	TouchConversation(ctx context.Context, id pgtype.UUID) error
+	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (Appointment, error)
+	// Reschedule: sets status back to 'scheduled' unless it was already
+	// cancelled/completed, in which case the WHERE guard means zero rows
+	// match and the repository surfaces ErrAppointmentNotFound.
+	UpdateAppointmentTime(ctx context.Context, arg UpdateAppointmentTimeParams) (Appointment, error)
 	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
+	UpdateConsultationStatus(ctx context.Context, arg UpdateConsultationStatusParams) (Consultation, error)
 	UpdateDepartment(ctx context.Context, arg UpdateDepartmentParams) (Department, error)
 	UpdateFacilityLogoAndHours(ctx context.Context, arg UpdateFacilityLogoAndHoursParams) (Facility, error)
-	UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (Patient, error)
+	UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (UpdatePatientGenderBloodGroupRow, error)
 	// Self-editable provider profile fields. Deliberately excludes
 	// verification_status (admin-only, see UpdateProviderVerificationStatus)
 	// and specialty/license_number (set at creation, not editable via this
@@ -98,13 +254,22 @@ type Querier interface {
 	UpdateProviderVerificationStatus(ctx context.Context, arg UpdateProviderVerificationStatusParams) (Provider, error)
 	UpdateReferralStatus(ctx context.Context, arg UpdateReferralStatusParams) (Referral, error)
 	UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, error)
+	UpdateUserFullName(ctx context.Context, arg UpdateUserFullNameParams) (User, error)
 	UpdateUserPasswordHash(ctx context.Context, arg UpdateUserPasswordHashParams) error
 	UpdateUserRoleID(ctx context.Context, arg UpdateUserRoleIDParams) (User, error)
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (User, error)
+	UpsertFeatureFlag(ctx context.Context, arg UpsertFeatureFlagParams) (FeatureFlag, error)
+	UpsertNotificationPreference(ctx context.Context, arg UpsertNotificationPreferenceParams) (NotificationPreference, error)
 	// Always a full replacement of all six jsonb columns (plus updated_by) —
 	// no partial-update merge here, unlike UpsertUserProfile. See
-	// Service.UpdateMedicalHistory.
-	UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (PatientMedicalHistory, error)
+	// Service.UpdateMedicalHistory. All six columns are encrypted at rest
+	// (pgcrypto pgp_sym_encrypt) — see
+	// db/migrations/0024_encrypt_sensitive_columns.up.sql. The Go layer passes
+	// these in as raw JSON bytes ([]byte), same as before this migration;
+	// encrypting the ::text form of that raw JSON and decrypting back to
+	// ::text::jsonb on the way out keeps that []byte shape unchanged from the
+	// caller's perspective.
+	UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (UpsertPatientMedicalHistoryRow, error)
 	// Partial update semantics live in the repository (Go), not here: the
 	// repository always re-reads-then-writes the merged bio/languages/
 	// availability_status, so this query itself is a plain full upsert.

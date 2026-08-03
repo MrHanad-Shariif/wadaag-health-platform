@@ -52,3 +52,16 @@ type StatusEvent struct {
 	Note        *string
 	OccurredAt  time.Time
 }
+
+// ProviderReferralActivity is one row of Service.MostActiveDoctors — how
+// many referrals a given provider has received as receiving_provider_id,
+// plus their display name (joined from users.full_name), for the admin
+// dashboard's "most active doctors" panel. Kept as this package's own type
+// (rather than dashboard.DoctorActivity directly) so referrals doesn't
+// import the dashboard package — main.go adapts between the two when
+// wiring dashboard.Service. See dashboard.DoctorActivityCounter.
+type ProviderReferralActivity struct {
+	ProviderID    uuid.UUID
+	FullName      *string
+	ReferralCount int64
+}
