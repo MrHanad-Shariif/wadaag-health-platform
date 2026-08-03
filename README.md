@@ -24,7 +24,7 @@ docker compose -f deploy/docker-compose.yml up --build
 
 This brings up Postgres, runs migrations, then starts the backend (`:8080`, hot-reloading via `air`) and the web app (`:5173`, Vite dev server). Postgres is exposed on host port **5433**, not 5432 — a native Postgres install already listening on 5432 will silently swallow connections meant for the container otherwise.
 
-Seed demo accounts (one per role, all sharing password `wadaag-dev-2026`):
+Seed the database — this creates two demo facilities and exactly one account, the system administrator (`administrator@wadaaghealthy.com` / `wadaaghealthy.com@2026`). Every other user (physicians, hospital admins, patients, etc.) is created afterward from the webapp's Authentication module by that admin, or via patient self-signup — nothing else is hardcoded:
 
 ```
 cd backend && DATABASE_URL="postgres://wadaag:wadaag@localhost:5433/wadaag_health?sslmode=disable" go run ./db/seed

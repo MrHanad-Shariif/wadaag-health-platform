@@ -3,6 +3,8 @@ export interface Patient {
   full_name: string
   date_of_birth?: string
   sex?: string
+  gender?: string
+  blood_group?: string
   national_id?: string
   phone?: string
   address?: string
@@ -41,6 +43,7 @@ export interface CreatePatientInput {
   phone?: string
   address?: string
   next_of_kin?: string
+  facility_id?: string
 }
 
 export interface CreateEncounterInput {
@@ -51,4 +54,29 @@ export interface CreateEncounterInput {
 export interface CreateObservationInput {
   type: ObservationType
   payload: Record<string, unknown>
+}
+
+export interface UpdatePatientDemographicsInput {
+  gender?: string
+  blood_group?: string
+}
+
+export interface MedicalHistory {
+  patient_id: string
+  allergies: string[]
+  chronic_conditions: string[]
+  current_medications: string[]
+  past_surgeries: string[]
+  family_history: string[]
+  vaccination_history: string[]
+  updated_at?: string
+}
+
+export interface UpdateMedicalHistoryInput {
+  allergies: string[]
+  chronic_conditions: string[]
+  current_medications: string[]
+  past_surgeries: string[]
+  family_history: string[]
+  vaccination_history: string[]
 }

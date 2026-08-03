@@ -3,6 +3,7 @@ package records
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -136,4 +137,98 @@ func (s *Service) CreateObservation(ctx context.Context, actorUserID uuid.UUID, 
 
 func (s *Service) ListObservations(ctx context.Context, encounterID uuid.UUID) ([]ClinicalObservation, error) {
 	return s.repo.ListObservationsByEncounter(ctx, encounterID)
+}
+
+// UpdatePatientDemographics is a partial update over the two fields it owns
+// (gender, blood_group): nil means "leave this field unchanged," so it
+// reads the current row first and overrides only the non-nil inputs before
+// writing — same idea as facilities' logo/hours PATCH — rather than blindly
+// writing whatever was passed (which would clear an omitted field to NULL).
+func (s *Service) UpdatePatientDemographics(ctx context.Context, patientID uuid.UUID, gender, bloodGroup *string) (Patient, error) {
+	current, err := s.repo.FindPatientByID(ctx, patientID)
+	if err != nil {
+		return Patient{}, err
+	}
+
+	if gender == nil {
+		gender = current.Gender
+	}
+	if bloodGroup == nil {
+		bloodGroup = current.BloodGroup
+	}
+
+	return s.repo.UpdatePatientGenderBloodGroup(ctx, patientID, gender, bloodGroup)
+}
+
+// emptyJSONArray is the default for any medical-history field omitted from
+// an UpdateMedicalHistoryInput or never written at all.
+var emptyJSONArray = []byte("[]")
+
+// GetMedicalHistory returns patientID's medical history, or a zero-value
+// PatientMedicalHistory (every field an empty JSON array) if no row has
+// ever been written for them — see the row lifecycle note on
+// PatientMedicalHistory. Never returns ErrMedicalHistoryNotFound to the
+// caller, matching identity.Service.GetProfile's "created lazily" handling.
+func (s *Service) GetMedicalHistory(ctx context.Context, patientID uuid.UUID) (PatientMedicalHistory, error) {
+	history, err := s.repo.FindPatientMedicalHistoryByPatientID(ctx, patientID)
+	return resolveMedicalHistory(patientID, history, err)
+}
+
+// resolveMedicalHistory is the pure "never 404" decision GetMedicalHistory
+// delegates to: given whatever the repository returned (including a
+// not-found error), decide what to hand back to the caller. Pulled out as a
+// DB-free function — same reasoning as identity's mergeProfileUpdate — so
+// the "first GET returns zero-value, not an error" behavior can be
+// unit-tested directly without a fake repository or a live database.
+func resolveMedicalHistory(patientID uuid.UUID, history PatientMedicalHistory, err error) (PatientMedicalHistory, error) {
+	if errors.Is(err, ErrMedicalHistoryNotFound) {
+		return PatientMedicalHistory{
+			PatientID:          patientID,
+			Allergies:          emptyJSONArray,
+			ChronicConditions:  emptyJSONArray,
+			CurrentMedications: emptyJSONArray,
+			PastSurgeries:      emptyJSONArray,
+			FamilyHistory:      emptyJSONArray,
+			VaccinationHistory: emptyJSONArray,
+		}, nil
+	}
+	if err != nil {
+		return PatientMedicalHistory{}, err
+	}
+	return history, nil
+}
+
+// UpdateMedicalHistoryInput is PATCH /patients/{id}/medical-history's body,
+// pre-decoded. Unlike the profile PATCH, this is always a full replacement
+// of all six fields, not a per-field merge — a field omitted from the
+// request body (nil/empty RawMessage) is written as an empty JSON array
+// `[]`, not left unchanged. This is a simpler contract than partial-update
+// and matches the "resend the whole list" shape a medical-history edit form
+// naturally produces.
+type UpdateMedicalHistoryInput struct {
+	Allergies          json.RawMessage
+	ChronicConditions  json.RawMessage
+	CurrentMedications json.RawMessage
+	PastSurgeries      json.RawMessage
+	FamilyHistory      json.RawMessage
+	VaccinationHistory json.RawMessage
+}
+
+func defaultJSONArray(raw json.RawMessage) []byte {
+	if len(raw) == 0 {
+		return emptyJSONArray
+	}
+	return []byte(raw)
+}
+
+func (s *Service) UpdateMedicalHistory(ctx context.Context, patientID uuid.UUID, updatedBy uuid.UUID, in UpdateMedicalHistoryInput) (PatientMedicalHistory, error) {
+	return s.repo.UpsertPatientMedicalHistory(
+		ctx, patientID, updatedBy,
+		defaultJSONArray(in.Allergies),
+		defaultJSONArray(in.ChronicConditions),
+		defaultJSONArray(in.CurrentMedications),
+		defaultJSONArray(in.PastSurgeries),
+		defaultJSONArray(in.FamilyHistory),
+		defaultJSONArray(in.VaccinationHistory),
+	)
 }

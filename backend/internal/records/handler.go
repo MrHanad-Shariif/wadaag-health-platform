@@ -29,6 +29,10 @@ func (h *Handler) Routes() chi.Router {
 	r.Use(platform.RequireAuth(h.tm))
 
 	r.Group(func(create chi.Router) {
+		// RequireRoles' system_admin bypass lets the administrator reach this
+		// too; unlike physician/hospital_admin they have no claims.FacilityID,
+		// so createPatient falls back to a facility_id in the request body
+		// for that role.
 		create.Use(platform.RequireRoles(platform.RolePhysician, platform.RoleHospitalAdmin))
 		create.Post("/patients", h.createPatient)
 	})
@@ -45,6 +49,28 @@ func (h *Handler) Routes() chi.Router {
 		patient.Use(consent.Middleware(h.consent, h.audit, audit.ActionViewPatient, h.resolvePatientRoute))
 		patient.Get("/patients/{patientID}", h.getPatient)
 		patient.Get("/patients/{patientID}/encounters", h.listEncounters)
+	})
+
+	r.Group(func(w chi.Router) {
+		w.Use(platform.RequireRoles(platform.RolePhysician, platform.RoleHospitalAdmin))
+		w.Use(consent.Middleware(h.consent, h.audit, audit.ActionUpdatePatient, h.resolvePatientRoute))
+		w.Patch("/patients/{patientID}", h.updatePatientDemographics)
+	})
+
+	r.Group(func(mh chi.Router) {
+		// Medical history gets its own audit action (distinct from
+		// ActionViewPatient) rather than being folded into the plain-patient
+		// GET group above — allergies/conditions/medications are more
+		// sensitive than demographic fields, and a separate action name
+		// makes them independently filterable in the audit log.
+		mh.Use(consent.Middleware(h.consent, h.audit, audit.ActionViewMedicalHistory, h.resolvePatientRoute))
+		mh.Get("/patients/{patientID}/medical-history", h.getMedicalHistory)
+	})
+
+	r.Group(func(mh chi.Router) {
+		mh.Use(platform.RequireRoles(platform.RolePhysician, platform.RoleHospitalAdmin))
+		mh.Use(consent.Middleware(h.consent, h.audit, audit.ActionUpdateMedicalHistory, h.resolvePatientRoute))
+		mh.Patch("/patients/{patientID}/medical-history", h.updateMedicalHistory)
 	})
 
 	r.Group(func(w chi.Router) {
@@ -115,6 +141,9 @@ type createPatientRequest struct {
 	Phone       *string `json:"phone"`
 	Address     *string `json:"address"`
 	NextOfKin   *string `json:"next_of_kin"`
+	// FacilityID is only read for system_admin, who has no claims.FacilityID
+	// of their own and must say which facility the patient belongs to.
+	FacilityID *string `json:"facility_id"`
 }
 
 type patientResponse struct {
@@ -126,6 +155,8 @@ type patientResponse struct {
 	Phone       *string `json:"phone,omitempty"`
 	Address     *string `json:"address,omitempty"`
 	NextOfKin   *string `json:"next_of_kin,omitempty"`
+	Gender      *string `json:"gender,omitempty"`
+	BloodGroup  *string `json:"blood_group,omitempty"`
 	Version     int32   `json:"version"`
 }
 
@@ -137,20 +168,39 @@ func toPatientResponse(p Patient) patientResponse {
 	}
 	return patientResponse{
 		ID: p.ID.String(), FullName: p.FullName, DateOfBirth: dob, Sex: p.Sex,
-		NationalID: p.NationalID, Phone: p.Phone, Address: p.Address, NextOfKin: p.NextOfKin, Version: p.Version,
+		NationalID: p.NationalID, Phone: p.Phone, Address: p.Address, NextOfKin: p.NextOfKin,
+		Gender: p.Gender, BloodGroup: p.BloodGroup, Version: p.Version,
 	}
 }
 
 func (h *Handler) createPatient(w http.ResponseWriter, r *http.Request) {
 	claims, ok := platform.ClaimsFromContext(r.Context())
-	if !ok || claims.FacilityID == nil {
-		platform.WriteError(w, http.StatusForbidden, "actor has no facility affiliation")
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
 		return
 	}
 
 	var req createPatientRequest
 	if err := platform.DecodeJSON(r, &req); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	facilityID := claims.FacilityID
+	if claims.Role == platform.RoleSystemAdmin {
+		if req.FacilityID == nil || *req.FacilityID == "" {
+			platform.WriteError(w, http.StatusBadRequest, "facility_id is required")
+			return
+		}
+		parsed, err := uuid.Parse(*req.FacilityID)
+		if err != nil {
+			platform.WriteError(w, http.StatusBadRequest, "invalid facility_id")
+			return
+		}
+		facilityID = &parsed
+	}
+	if facilityID == nil {
+		platform.WriteError(w, http.StatusForbidden, "actor has no facility affiliation")
 		return
 	}
 
@@ -164,7 +214,7 @@ func (h *Handler) createPatient(w http.ResponseWriter, r *http.Request) {
 		dob = &parsed
 	}
 
-	patient, err := h.service.CreatePatient(r.Context(), claims.UserID, *claims.FacilityID, CreatePatientInput{
+	patient, err := h.service.CreatePatient(r.Context(), claims.UserID, *facilityID, CreatePatientInput{
 		FullName: req.FullName, DateOfBirth: dob, Sex: req.Sex, NationalID: req.NationalID,
 		Phone: req.Phone, Address: req.Address, NextOfKin: req.NextOfKin,
 	})
@@ -192,6 +242,50 @@ func (h *Handler) getPatient(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusInternalServerError, "failed to load patient")
 		return
 	}
+	platform.WriteJSON(w, http.StatusOK, toPatientResponse(patient))
+}
+
+type updatePatientDemographicsRequest struct {
+	Gender     *string `json:"gender"`
+	BloodGroup *string `json:"blood_group"`
+}
+
+// updatePatientDemographics is a partial update (nil = unchanged) over just
+// gender/blood_group — see Service.UpdatePatientDemographics.
+func (h *Handler) updatePatientDemographics(w http.ResponseWriter, r *http.Request) {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return
+	}
+
+	patientID, err := uuid.Parse(chi.URLParam(r, "patientID"))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid patient id")
+		return
+	}
+
+	var req updatePatientDemographicsRequest
+	if err := platform.DecodeJSON(r, &req); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	patient, err := h.service.UpdatePatientDemographics(r.Context(), patientID, req.Gender, req.BloodGroup)
+	if err != nil {
+		if errors.Is(err, ErrPatientNotFound) {
+			platform.WriteError(w, http.StatusNotFound, "patient not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, "failed to update patient")
+		return
+	}
+
+	h.audit.Record(r.Context(), audit.RecordInput{
+		ActorUserID: claims.UserID, ActorRole: claims.Role, Action: audit.ActionUpdatePatient,
+		ResourceType: "patient", ResourceID: &patient.ID, PatientID: &patient.ID, Result: audit.ResultAllowed,
+	})
+
 	platform.WriteJSON(w, http.StatusOK, toPatientResponse(patient))
 }
 
@@ -355,4 +449,96 @@ func (h *Handler) listObservations(w http.ResponseWriter, r *http.Request) {
 		out[i] = toObservationResponse(o)
 	}
 	platform.WriteJSON(w, http.StatusOK, out)
+}
+
+type medicalHistoryResponse struct {
+	PatientID          string          `json:"patient_id"`
+	Allergies          json.RawMessage `json:"allergies"`
+	ChronicConditions  json.RawMessage `json:"chronic_conditions"`
+	CurrentMedications json.RawMessage `json:"current_medications"`
+	PastSurgeries      json.RawMessage `json:"past_surgeries"`
+	FamilyHistory      json.RawMessage `json:"family_history"`
+	VaccinationHistory json.RawMessage `json:"vaccination_history"`
+	UpdatedAt          *string         `json:"updated_at,omitempty"`
+}
+
+func toMedicalHistoryResponse(patientID uuid.UUID, hist PatientMedicalHistory) medicalHistoryResponse {
+	var updatedAt *string
+	if !hist.UpdatedAt.IsZero() {
+		s := hist.UpdatedAt.Format(time.RFC3339)
+		updatedAt = &s
+	}
+	return medicalHistoryResponse{
+		PatientID: patientID.String(), Allergies: json.RawMessage(hist.Allergies),
+		ChronicConditions: json.RawMessage(hist.ChronicConditions), CurrentMedications: json.RawMessage(hist.CurrentMedications),
+		PastSurgeries: json.RawMessage(hist.PastSurgeries), FamilyHistory: json.RawMessage(hist.FamilyHistory),
+		VaccinationHistory: json.RawMessage(hist.VaccinationHistory), UpdatedAt: updatedAt,
+	}
+}
+
+// getMedicalHistory never 404s: a patient with no history recorded yet gets
+// a 200 with every field as an empty JSON array — see
+// Service.GetMedicalHistory.
+func (h *Handler) getMedicalHistory(w http.ResponseWriter, r *http.Request) {
+	patientID, err := uuid.Parse(chi.URLParam(r, "patientID"))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid patient id")
+		return
+	}
+
+	history, err := h.service.GetMedicalHistory(r.Context(), patientID)
+	if err != nil {
+		platform.WriteError(w, http.StatusInternalServerError, "failed to load medical history")
+		return
+	}
+
+	platform.WriteJSON(w, http.StatusOK, toMedicalHistoryResponse(patientID, history))
+}
+
+type updateMedicalHistoryRequest struct {
+	Allergies          json.RawMessage `json:"allergies"`
+	ChronicConditions  json.RawMessage `json:"chronic_conditions"`
+	CurrentMedications json.RawMessage `json:"current_medications"`
+	PastSurgeries      json.RawMessage `json:"past_surgeries"`
+	FamilyHistory      json.RawMessage `json:"family_history"`
+	VaccinationHistory json.RawMessage `json:"vaccination_history"`
+}
+
+// updateMedicalHistory always writes a full replacement of all six fields —
+// a field omitted from the request body is written as an empty JSON array,
+// not left unchanged. See Service.UpdateMedicalHistory.
+func (h *Handler) updateMedicalHistory(w http.ResponseWriter, r *http.Request) {
+	claims, ok := platform.ClaimsFromContext(r.Context())
+	if !ok {
+		platform.WriteError(w, http.StatusUnauthorized, "missing auth context")
+		return
+	}
+
+	patientID, err := uuid.Parse(chi.URLParam(r, "patientID"))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid patient id")
+		return
+	}
+
+	var req updateMedicalHistoryRequest
+	if err := platform.DecodeJSON(r, &req); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	history, err := h.service.UpdateMedicalHistory(r.Context(), patientID, claims.UserID, UpdateMedicalHistoryInput{
+		Allergies: req.Allergies, ChronicConditions: req.ChronicConditions, CurrentMedications: req.CurrentMedications,
+		PastSurgeries: req.PastSurgeries, FamilyHistory: req.FamilyHistory, VaccinationHistory: req.VaccinationHistory,
+	})
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.audit.Record(r.Context(), audit.RecordInput{
+		ActorUserID: claims.UserID, ActorRole: claims.Role, Action: audit.ActionUpdateMedicalHistory,
+		ResourceType: "patient_medical_history", ResourceID: &patientID, PatientID: &patientID, Result: audit.ResultAllowed,
+	})
+
+	platform.WriteJSON(w, http.StatusOK, toMedicalHistoryResponse(patientID, history))
 }

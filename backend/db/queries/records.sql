@@ -33,3 +33,37 @@ SELECT * FROM clinical_observations WHERE encounter_id = $1 ORDER BY recorded_at
 
 -- name: CountEncounters :one
 SELECT count(*) FROM encounters;
+
+-- name: UpdatePatientGenderBloodGroup :one
+UPDATE patients
+SET gender = $2,
+    blood_group = $3,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpsertPatientMedicalHistory :one
+-- Always a full replacement of all six jsonb columns (plus updated_by) —
+-- no partial-update merge here, unlike UpsertUserProfile. See
+-- Service.UpdateMedicalHistory.
+INSERT INTO patient_medical_history (
+    patient_id, allergies, chronic_conditions, current_medications,
+    past_surgeries, family_history, vaccination_history, updated_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (patient_id) DO UPDATE
+SET allergies = EXCLUDED.allergies,
+    chronic_conditions = EXCLUDED.chronic_conditions,
+    current_medications = EXCLUDED.current_medications,
+    past_surgeries = EXCLUDED.past_surgeries,
+    family_history = EXCLUDED.family_history,
+    vaccination_history = EXCLUDED.vaccination_history,
+    updated_by = EXCLUDED.updated_by,
+    updated_at = now()
+RETURNING *;
+
+-- name: FindPatientMedicalHistoryByPatientID :one
+-- Returns pgx.ErrNoRows if no row exists yet — expected (a patient with no
+-- medical history recorded), handled in the repository layer, not an error
+-- condition.
+SELECT * FROM patient_medical_history WHERE patient_id = $1;

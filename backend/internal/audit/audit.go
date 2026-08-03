@@ -20,14 +20,17 @@ const (
 type Action string
 
 const (
-	ActionViewPatient     Action = "view_patient"
-	ActionCreatePatient   Action = "create_patient"
-	ActionViewEncounter   Action = "view_encounter"
-	ActionCreateEncounter Action = "create_encounter"
-	ActionCreateReferral  Action = "create_referral"
-	ActionUpdateReferral  Action = "update_referral"
-	ActionGrantConsent    Action = "grant_consent"
-	ActionRevokeConsent   Action = "revoke_consent"
+	ActionViewPatient          Action = "view_patient"
+	ActionCreatePatient        Action = "create_patient"
+	ActionUpdatePatient        Action = "update_patient"
+	ActionViewEncounter        Action = "view_encounter"
+	ActionCreateEncounter      Action = "create_encounter"
+	ActionCreateReferral       Action = "create_referral"
+	ActionUpdateReferral       Action = "update_referral"
+	ActionGrantConsent         Action = "grant_consent"
+	ActionRevokeConsent        Action = "revoke_consent"
+	ActionViewMedicalHistory   Action = "view_medical_history"
+	ActionUpdateMedicalHistory Action = "update_medical_history"
 )
 
 type Entry struct {

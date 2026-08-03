@@ -108,7 +108,7 @@ func (q *Queries) CreateEncounter(ctx context.Context, arg CreateEncounterParams
 const createPatient = `-- name: CreatePatient :one
 INSERT INTO patients (user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at
+RETURNING id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
 `
 
 type CreatePatientParams struct {
@@ -147,6 +147,8 @@ func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (P
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Gender,
+		&i.BloodGroup,
 	)
 	return i, err
 }
@@ -174,7 +176,7 @@ func (q *Queries) FindEncounterByID(ctx context.Context, id pgtype.UUID) (Encoun
 }
 
 const findPatientByID = `-- name: FindPatientByID :one
-SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at FROM patients WHERE id = $1
+SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group FROM patients WHERE id = $1
 `
 
 func (q *Queries) FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient, error) {
@@ -191,6 +193,34 @@ func (q *Queries) FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient,
 		&i.Address,
 		&i.NextOfKin,
 		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Gender,
+		&i.BloodGroup,
+	)
+	return i, err
+}
+
+const findPatientMedicalHistoryByPatientID = `-- name: FindPatientMedicalHistoryByPatientID :one
+SELECT id, patient_id, allergies, chronic_conditions, current_medications, past_surgeries, family_history, vaccination_history, updated_by, created_at, updated_at FROM patient_medical_history WHERE patient_id = $1
+`
+
+// Returns pgx.ErrNoRows if no row exists yet — expected (a patient with no
+// medical history recorded), handled in the repository layer, not an error
+// condition.
+func (q *Queries) FindPatientMedicalHistoryByPatientID(ctx context.Context, patientID pgtype.UUID) (PatientMedicalHistory, error) {
+	row := q.db.QueryRow(ctx, findPatientMedicalHistoryByPatientID, patientID)
+	var i PatientMedicalHistory
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.Allergies,
+		&i.ChronicConditions,
+		&i.CurrentMedications,
+		&i.PastSurgeries,
+		&i.FamilyHistory,
+		&i.VaccinationHistory,
+		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -264,7 +294,7 @@ func (q *Queries) ListObservationsByEncounter(ctx context.Context, encounterID p
 }
 
 const listPatients = `-- name: ListPatients :many
-SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at FROM patients ORDER BY created_at DESC
+SELECT id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group FROM patients ORDER BY created_at DESC
 `
 
 func (q *Queries) ListPatients(ctx context.Context) ([]Patient, error) {
@@ -289,6 +319,8 @@ func (q *Queries) ListPatients(ctx context.Context) ([]Patient, error) {
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Gender,
+			&i.BloodGroup,
 		); err != nil {
 			return nil, err
 		}
@@ -298,4 +330,101 @@ func (q *Queries) ListPatients(ctx context.Context) ([]Patient, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updatePatientGenderBloodGroup = `-- name: UpdatePatientGenderBloodGroup :one
+UPDATE patients
+SET gender = $2,
+    blood_group = $3,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, full_name, date_of_birth, sex, national_id, phone, address, next_of_kin, version, created_at, updated_at, gender, blood_group
+`
+
+type UpdatePatientGenderBloodGroupParams struct {
+	ID         pgtype.UUID `json:"id"`
+	Gender     pgtype.Text `json:"gender"`
+	BloodGroup pgtype.Text `json:"blood_group"`
+}
+
+func (q *Queries) UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (Patient, error) {
+	row := q.db.QueryRow(ctx, updatePatientGenderBloodGroup, arg.ID, arg.Gender, arg.BloodGroup)
+	var i Patient
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FullName,
+		&i.DateOfBirth,
+		&i.Sex,
+		&i.NationalID,
+		&i.Phone,
+		&i.Address,
+		&i.NextOfKin,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Gender,
+		&i.BloodGroup,
+	)
+	return i, err
+}
+
+const upsertPatientMedicalHistory = `-- name: UpsertPatientMedicalHistory :one
+INSERT INTO patient_medical_history (
+    patient_id, allergies, chronic_conditions, current_medications,
+    past_surgeries, family_history, vaccination_history, updated_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (patient_id) DO UPDATE
+SET allergies = EXCLUDED.allergies,
+    chronic_conditions = EXCLUDED.chronic_conditions,
+    current_medications = EXCLUDED.current_medications,
+    past_surgeries = EXCLUDED.past_surgeries,
+    family_history = EXCLUDED.family_history,
+    vaccination_history = EXCLUDED.vaccination_history,
+    updated_by = EXCLUDED.updated_by,
+    updated_at = now()
+RETURNING id, patient_id, allergies, chronic_conditions, current_medications, past_surgeries, family_history, vaccination_history, updated_by, created_at, updated_at
+`
+
+type UpsertPatientMedicalHistoryParams struct {
+	PatientID          pgtype.UUID `json:"patient_id"`
+	Allergies          []byte      `json:"allergies"`
+	ChronicConditions  []byte      `json:"chronic_conditions"`
+	CurrentMedications []byte      `json:"current_medications"`
+	PastSurgeries      []byte      `json:"past_surgeries"`
+	FamilyHistory      []byte      `json:"family_history"`
+	VaccinationHistory []byte      `json:"vaccination_history"`
+	UpdatedBy          pgtype.UUID `json:"updated_by"`
+}
+
+// Always a full replacement of all six jsonb columns (plus updated_by) —
+// no partial-update merge here, unlike UpsertUserProfile. See
+// Service.UpdateMedicalHistory.
+func (q *Queries) UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (PatientMedicalHistory, error) {
+	row := q.db.QueryRow(ctx, upsertPatientMedicalHistory,
+		arg.PatientID,
+		arg.Allergies,
+		arg.ChronicConditions,
+		arg.CurrentMedications,
+		arg.PastSurgeries,
+		arg.FamilyHistory,
+		arg.VaccinationHistory,
+		arg.UpdatedBy,
+	)
+	var i PatientMedicalHistory
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.Allergies,
+		&i.ChronicConditions,
+		&i.CurrentMedications,
+		&i.PastSurgeries,
+		&i.FamilyHistory,
+		&i.VaccinationHistory,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

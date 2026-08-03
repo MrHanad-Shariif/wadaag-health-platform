@@ -3,16 +3,25 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { PageHeader } from '../../shared/PageHeader'
 import { useToast } from '../../shared/useToast'
+import { useFetch } from '../../shared/useFetch'
+import { LoadingState, ErrorState } from '../../shared/StatusMessage'
+import { useAuth } from '../auth/useAuth'
+import { listFacilities } from '../facilities/api'
 import { createPatient } from './api'
 
 export function NewPatientPage() {
   const navigate = useNavigate()
   const { show } = useToast()
+  const { user } = useAuth()
+  const isSystemAdmin = user?.role === 'system_admin'
+  const facilitiesState = useFetch(() => (isSystemAdmin ? listFacilities() : Promise.resolve([])), [isSystemAdmin])
+
   const [fullName, setFullName] = useState('')
   const [dateOfBirth, setDateOfBirth] = useState('')
   const [sex, setSex] = useState('')
   const [phone, setPhone] = useState('')
   const [nationalId, setNationalId] = useState('')
+  const [facilityId, setFacilityId] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -27,6 +36,7 @@ export function NewPatientPage() {
         sex: sex || undefined,
         phone: phone || undefined,
         national_id: nationalId || undefined,
+        facility_id: isSystemAdmin ? facilityId : undefined,
       })
       show(`${patient.full_name} registered`)
       navigate(`/patients/${patient.id}`)
@@ -36,10 +46,27 @@ export function NewPatientPage() {
     }
   }
 
+  if (isSystemAdmin && facilitiesState.loading) return <LoadingState />
+  if (isSystemAdmin && facilitiesState.error) return <ErrorState message={facilitiesState.error} />
+
   return (
     <div className="page page--narrow">
       <PageHeader eyebrow="Records" title="Register a patient" />
       <form className="form" onSubmit={handleSubmit}>
+        {isSystemAdmin && (
+          <>
+            <label htmlFor="facility">Facility</label>
+            <select id="facility" value={facilityId} onChange={(e) => setFacilityId(e.target.value)} required>
+              <option value="">Select a facility</option>
+              {facilitiesState.data?.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
         <label htmlFor="fullName">Full name</label>
         <input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
 

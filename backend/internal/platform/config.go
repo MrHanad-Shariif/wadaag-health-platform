@@ -16,6 +16,13 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	Env             string
+	// UploadDir is the local-disk root uploaded files are written under
+	// (e.g. profile photos, under {UploadDir}/profile-photos/) — see
+	// server.NewRouter's /uploads/* static mount, which serves this same
+	// directory. No object-storage vendor is chosen yet (see the roadmap's
+	// "Needs a decision from the product owner" section); local disk is the
+	// deliberate choice for this phase.
+	UploadDir string
 }
 
 func LoadConfig() (Config, error) {
@@ -26,6 +33,7 @@ func LoadConfig() (Config, error) {
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 		Env:             getEnv("APP_ENV", "development"),
+		UploadDir:       getEnv("UPLOAD_DIR", "./uploads"),
 	}
 
 	if cfg.JWTSecret == "" {

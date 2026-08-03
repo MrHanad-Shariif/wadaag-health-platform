@@ -22,10 +22,67 @@ func (q *Queries) CountFacilities(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const createBranch = `-- name: CreateBranch :one
+INSERT INTO branches (facility_id, name, address, phone)
+VALUES ($1, $2, $3, $4)
+RETURNING id, facility_id, name, address, phone, created_at, updated_at
+`
+
+type CreateBranchParams struct {
+	FacilityID pgtype.UUID `json:"facility_id"`
+	Name       string      `json:"name"`
+	Address    pgtype.Text `json:"address"`
+	Phone      pgtype.Text `json:"phone"`
+}
+
+func (q *Queries) CreateBranch(ctx context.Context, arg CreateBranchParams) (Branch, error) {
+	row := q.db.QueryRow(ctx, createBranch,
+		arg.FacilityID,
+		arg.Name,
+		arg.Address,
+		arg.Phone,
+	)
+	var i Branch
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.Address,
+		&i.Phone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createDepartment = `-- name: CreateDepartment :one
+INSERT INTO departments (facility_id, name)
+VALUES ($1, $2)
+RETURNING id, facility_id, name, created_at, updated_at
+`
+
+type CreateDepartmentParams struct {
+	FacilityID pgtype.UUID `json:"facility_id"`
+	Name       string      `json:"name"`
+}
+
+func (q *Queries) CreateDepartment(ctx context.Context, arg CreateDepartmentParams) (Department, error) {
+	row := q.db.QueryRow(ctx, createDepartment, arg.FacilityID, arg.Name)
+	var i Department
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createFacility = `-- name: CreateFacility :one
 INSERT INTO facilities (name, type, region, district, phone, address)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, name, type, region, district, phone, address, created_at, updated_at
+RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours
 `
 
 type CreateFacilityParams struct {
@@ -57,6 +114,8 @@ func (q *Queries) CreateFacility(ctx context.Context, arg CreateFacilityParams) 
 		&i.Address,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LogoUrl,
+		&i.WorkingHours,
 	)
 	return i, err
 }
@@ -64,7 +123,7 @@ func (q *Queries) CreateFacility(ctx context.Context, arg CreateFacilityParams) 
 const createProvider = `-- name: CreateProvider :one
 INSERT INTO providers (user_id, facility_id, specialty, license_number)
 VALUES ($1, $2, $3, $4)
-RETURNING id, user_id, facility_id, specialty, license_number, created_at, updated_at
+RETURNING id, user_id, facility_id, specialty, license_number, created_at, updated_at, qualifications, years_experience, consultation_fee, verification_status, languages, certificates, areas_of_expertise
 `
 
 type CreateProviderParams struct {
@@ -90,12 +149,73 @@ func (q *Queries) CreateProvider(ctx context.Context, arg CreateProviderParams) 
 		&i.LicenseNumber,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Qualifications,
+		&i.YearsExperience,
+		&i.ConsultationFee,
+		&i.VerificationStatus,
+		&i.Languages,
+		&i.Certificates,
+		&i.AreasOfExpertise,
+	)
+	return i, err
+}
+
+const deleteBranch = `-- name: DeleteBranch :exec
+DELETE FROM branches WHERE id = $1
+`
+
+func (q *Queries) DeleteBranch(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBranch, id)
+	return err
+}
+
+const deleteDepartment = `-- name: DeleteDepartment :exec
+DELETE FROM departments WHERE id = $1
+`
+
+func (q *Queries) DeleteDepartment(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDepartment, id)
+	return err
+}
+
+const findBranchByID = `-- name: FindBranchByID :one
+SELECT id, facility_id, name, address, phone, created_at, updated_at FROM branches WHERE id = $1
+`
+
+func (q *Queries) FindBranchByID(ctx context.Context, id pgtype.UUID) (Branch, error) {
+	row := q.db.QueryRow(ctx, findBranchByID, id)
+	var i Branch
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.Address,
+		&i.Phone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const findDepartmentByID = `-- name: FindDepartmentByID :one
+SELECT id, facility_id, name, created_at, updated_at FROM departments WHERE id = $1
+`
+
+func (q *Queries) FindDepartmentByID(ctx context.Context, id pgtype.UUID) (Department, error) {
+	row := q.db.QueryRow(ctx, findDepartmentByID, id)
+	var i Department
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const findFacilityByID = `-- name: FindFacilityByID :one
-SELECT id, name, type, region, district, phone, address, created_at, updated_at FROM facilities WHERE id = $1
+SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours FROM facilities WHERE id = $1
 `
 
 func (q *Queries) FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facility, error) {
@@ -111,12 +231,40 @@ func (q *Queries) FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facilit
 		&i.Address,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LogoUrl,
+		&i.WorkingHours,
+	)
+	return i, err
+}
+
+const findProviderByID = `-- name: FindProviderByID :one
+SELECT id, user_id, facility_id, specialty, license_number, created_at, updated_at, qualifications, years_experience, consultation_fee, verification_status, languages, certificates, areas_of_expertise FROM providers WHERE id = $1
+`
+
+func (q *Queries) FindProviderByID(ctx context.Context, id pgtype.UUID) (Provider, error) {
+	row := q.db.QueryRow(ctx, findProviderByID, id)
+	var i Provider
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FacilityID,
+		&i.Specialty,
+		&i.LicenseNumber,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Qualifications,
+		&i.YearsExperience,
+		&i.ConsultationFee,
+		&i.VerificationStatus,
+		&i.Languages,
+		&i.Certificates,
+		&i.AreasOfExpertise,
 	)
 	return i, err
 }
 
 const findProviderByUserID = `-- name: FindProviderByUserID :one
-SELECT id, user_id, facility_id, specialty, license_number, created_at, updated_at FROM providers WHERE user_id = $1
+SELECT id, user_id, facility_id, specialty, license_number, created_at, updated_at, qualifications, years_experience, consultation_fee, verification_status, languages, certificates, areas_of_expertise FROM providers WHERE user_id = $1
 `
 
 func (q *Queries) FindProviderByUserID(ctx context.Context, userID pgtype.UUID) (Provider, error) {
@@ -130,12 +278,81 @@ func (q *Queries) FindProviderByUserID(ctx context.Context, userID pgtype.UUID) 
 		&i.LicenseNumber,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Qualifications,
+		&i.YearsExperience,
+		&i.ConsultationFee,
+		&i.VerificationStatus,
+		&i.Languages,
+		&i.Certificates,
+		&i.AreasOfExpertise,
 	)
 	return i, err
 }
 
+const listBranchesByFacility = `-- name: ListBranchesByFacility :many
+SELECT id, facility_id, name, address, phone, created_at, updated_at FROM branches WHERE facility_id = $1 ORDER BY name
+`
+
+func (q *Queries) ListBranchesByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Branch, error) {
+	rows, err := q.db.Query(ctx, listBranchesByFacility, facilityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Branch
+	for rows.Next() {
+		var i Branch
+		if err := rows.Scan(
+			&i.ID,
+			&i.FacilityID,
+			&i.Name,
+			&i.Address,
+			&i.Phone,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDepartmentsByFacility = `-- name: ListDepartmentsByFacility :many
+SELECT id, facility_id, name, created_at, updated_at FROM departments WHERE facility_id = $1 ORDER BY name
+`
+
+func (q *Queries) ListDepartmentsByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Department, error) {
+	rows, err := q.db.Query(ctx, listDepartmentsByFacility, facilityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Department
+	for rows.Next() {
+		var i Department
+		if err := rows.Scan(
+			&i.ID,
+			&i.FacilityID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFacilities = `-- name: ListFacilities :many
-SELECT id, name, type, region, district, phone, address, created_at, updated_at FROM facilities ORDER BY name
+SELECT id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours FROM facilities ORDER BY name
 `
 
 func (q *Queries) ListFacilities(ctx context.Context) ([]Facility, error) {
@@ -157,6 +374,8 @@ func (q *Queries) ListFacilities(ctx context.Context) ([]Facility, error) {
 			&i.Address,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LogoUrl,
+			&i.WorkingHours,
 		); err != nil {
 			return nil, err
 		}
@@ -166,4 +385,188 @@ func (q *Queries) ListFacilities(ctx context.Context) ([]Facility, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateBranch = `-- name: UpdateBranch :one
+UPDATE branches
+SET name = $2, address = $3, phone = $4, updated_at = now()
+WHERE id = $1
+RETURNING id, facility_id, name, address, phone, created_at, updated_at
+`
+
+type UpdateBranchParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Name    string      `json:"name"`
+	Address pgtype.Text `json:"address"`
+	Phone   pgtype.Text `json:"phone"`
+}
+
+func (q *Queries) UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error) {
+	row := q.db.QueryRow(ctx, updateBranch,
+		arg.ID,
+		arg.Name,
+		arg.Address,
+		arg.Phone,
+	)
+	var i Branch
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.Address,
+		&i.Phone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateDepartment = `-- name: UpdateDepartment :one
+UPDATE departments
+SET name = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, facility_id, name, created_at, updated_at
+`
+
+type UpdateDepartmentParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+}
+
+func (q *Queries) UpdateDepartment(ctx context.Context, arg UpdateDepartmentParams) (Department, error) {
+	row := q.db.QueryRow(ctx, updateDepartment, arg.ID, arg.Name)
+	var i Department
+	err := row.Scan(
+		&i.ID,
+		&i.FacilityID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateFacilityLogoAndHours = `-- name: UpdateFacilityLogoAndHours :one
+UPDATE facilities
+SET logo_url = $2, working_hours = $3, updated_at = now()
+WHERE id = $1
+RETURNING id, name, type, region, district, phone, address, created_at, updated_at, logo_url, working_hours
+`
+
+type UpdateFacilityLogoAndHoursParams struct {
+	ID           pgtype.UUID `json:"id"`
+	LogoUrl      pgtype.Text `json:"logo_url"`
+	WorkingHours []byte      `json:"working_hours"`
+}
+
+func (q *Queries) UpdateFacilityLogoAndHours(ctx context.Context, arg UpdateFacilityLogoAndHoursParams) (Facility, error) {
+	row := q.db.QueryRow(ctx, updateFacilityLogoAndHours, arg.ID, arg.LogoUrl, arg.WorkingHours)
+	var i Facility
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.Region,
+		&i.District,
+		&i.Phone,
+		&i.Address,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LogoUrl,
+		&i.WorkingHours,
+	)
+	return i, err
+}
+
+const updateProviderProfile = `-- name: UpdateProviderProfile :one
+UPDATE providers
+SET qualifications = $2,
+    years_experience = $3,
+    consultation_fee = $4,
+    languages = $5,
+    certificates = $6,
+    areas_of_expertise = $7,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, facility_id, specialty, license_number, created_at, updated_at, qualifications, years_experience, consultation_fee, verification_status, languages, certificates, areas_of_expertise
+`
+
+type UpdateProviderProfileParams struct {
+	ID               pgtype.UUID    `json:"id"`
+	Qualifications   []string       `json:"qualifications"`
+	YearsExperience  pgtype.Int4    `json:"years_experience"`
+	ConsultationFee  pgtype.Numeric `json:"consultation_fee"`
+	Languages        []string       `json:"languages"`
+	Certificates     []byte         `json:"certificates"`
+	AreasOfExpertise []string       `json:"areas_of_expertise"`
+}
+
+// Self-editable provider profile fields. Deliberately excludes
+// verification_status (admin-only, see UpdateProviderVerificationStatus)
+// and specialty/license_number (set at creation, not editable via this
+// profile-update surface).
+func (q *Queries) UpdateProviderProfile(ctx context.Context, arg UpdateProviderProfileParams) (Provider, error) {
+	row := q.db.QueryRow(ctx, updateProviderProfile,
+		arg.ID,
+		arg.Qualifications,
+		arg.YearsExperience,
+		arg.ConsultationFee,
+		arg.Languages,
+		arg.Certificates,
+		arg.AreasOfExpertise,
+	)
+	var i Provider
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FacilityID,
+		&i.Specialty,
+		&i.LicenseNumber,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Qualifications,
+		&i.YearsExperience,
+		&i.ConsultationFee,
+		&i.VerificationStatus,
+		&i.Languages,
+		&i.Certificates,
+		&i.AreasOfExpertise,
+	)
+	return i, err
+}
+
+const updateProviderVerificationStatus = `-- name: UpdateProviderVerificationStatus :one
+UPDATE providers
+SET verification_status = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, facility_id, specialty, license_number, created_at, updated_at, qualifications, years_experience, consultation_fee, verification_status, languages, certificates, areas_of_expertise
+`
+
+type UpdateProviderVerificationStatusParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	VerificationStatus string      `json:"verification_status"`
+}
+
+// Admin-only field, kept as its own query so the self-edit path
+// (UpdateProviderProfile) can never touch it.
+func (q *Queries) UpdateProviderVerificationStatus(ctx context.Context, arg UpdateProviderVerificationStatusParams) (Provider, error) {
+	row := q.db.QueryRow(ctx, updateProviderVerificationStatus, arg.ID, arg.VerificationStatus)
+	var i Provider
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FacilityID,
+		&i.Specialty,
+		&i.LicenseNumber,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Qualifications,
+		&i.YearsExperience,
+		&i.ConsultationFee,
+		&i.VerificationStatus,
+		&i.Languages,
+		&i.Certificates,
+		&i.AreasOfExpertise,
+	)
+	return i, err
 }

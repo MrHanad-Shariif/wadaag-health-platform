@@ -26,6 +26,17 @@ type Modules struct {
 	Audit      *audit.Handler
 	Authz      *authz.Handler
 	Dashboard  *dashboard.Handler
+
+	// RateLimiter is applied to the whole /api/v1 surface (see NewRouter).
+	// Health checks under /healthz are deliberately excluded — they're
+	// infra probes, not an abuse target, and rate-limiting them would just
+	// risk breaking uptime monitoring.
+	RateLimiter *platform.RateLimiter
+
+	// UploadDir is served statically at /uploads/* (see below) — must match
+	// platform.Config.UploadDir, the directory identity.Service writes
+	// uploaded files (e.g. profile photos) under.
+	UploadDir string
 }
 
 // NewRouter is the one place middleware ordering is decided. Every
@@ -53,7 +64,14 @@ func NewRouter(modules Modules) http.Handler {
 		platform.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// Uploaded files (profile photos today) are served plainly, outside the
+	// /api/v1 group and its auth/rate-limit middleware, deliberately — they
+	// need to be viewable via a bare <img src> without a bearer token, same
+	// as any other publicly-linkable static asset.
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(modules.UploadDir))))
+
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(modules.RateLimiter.Middleware)
 		api.Mount("/auth", modules.Identity.Routes())
 		api.Mount("/facilities", modules.Facilities.Routes())
 		api.Mount("/records", modules.Records.Routes())

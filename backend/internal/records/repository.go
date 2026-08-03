@@ -16,6 +16,13 @@ import (
 var ErrPatientNotFound = errors.New("patient not found")
 var ErrEncounterNotFound = errors.New("encounter not found")
 
+// ErrMedicalHistoryNotFound signals no patient_medical_history row exists
+// yet for a patient — not itself an error condition callers should surface:
+// Service.GetMedicalHistory catches it and returns a zero-value
+// PatientMedicalHistory instead, mirroring identity.ErrProfileNotFound's
+// "created lazily" handling.
+var ErrMedicalHistoryNotFound = errors.New("patient medical history not found")
+
 type Repository struct {
 	q *sqlcgen.Queries
 }
@@ -176,9 +183,81 @@ func patientFromRow(row sqlcgen.Patient) Patient {
 		Phone:       platform.FromPgText(row.Phone),
 		Address:     platform.FromPgText(row.Address),
 		NextOfKin:   platform.FromPgText(row.NextOfKin),
+		Gender:      platform.FromPgText(row.Gender),
+		BloodGroup:  platform.FromPgText(row.BloodGroup),
 		Version:     row.Version,
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+// UpdatePatientGenderBloodGroup overwrites just gender/blood_group, creating
+// no new row (the patient must already exist). Callers wanting
+// partial-update semantics (only overwrite the field the caller actually
+// supplied) must pre-merge against the current row — see
+// Service.UpdatePatientDemographics — this method itself always writes
+// exactly what it's given.
+func (r *Repository) UpdatePatientGenderBloodGroup(ctx context.Context, patientID uuid.UUID, gender, bloodGroup *string) (Patient, error) {
+	row, err := r.q.UpdatePatientGenderBloodGroup(ctx, sqlcgen.UpdatePatientGenderBloodGroupParams{
+		ID:         platform.PgUUID(patientID),
+		Gender:     platform.PgText(gender),
+		BloodGroup: platform.PgText(bloodGroup),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Patient{}, ErrPatientNotFound
+	}
+	if err != nil {
+		return Patient{}, fmt.Errorf("update patient gender/blood group: %w", err)
+	}
+	return patientFromRow(row), nil
+}
+
+// UpsertPatientMedicalHistory always writes a full replacement of all six
+// jsonb columns (plus updated_by) — no partial-update merge at this layer,
+// unlike UpsertProfileFields. See Service.UpdateMedicalHistory.
+func (r *Repository) UpsertPatientMedicalHistory(
+	ctx context.Context, patientID uuid.UUID, updatedBy uuid.UUID,
+	allergies, chronicConditions, currentMedications, pastSurgeries, familyHistory, vaccinationHistory []byte,
+) (PatientMedicalHistory, error) {
+	row, err := r.q.UpsertPatientMedicalHistory(ctx, sqlcgen.UpsertPatientMedicalHistoryParams{
+		PatientID:          platform.PgUUID(patientID),
+		Allergies:          allergies,
+		ChronicConditions:  chronicConditions,
+		CurrentMedications: currentMedications,
+		PastSurgeries:      pastSurgeries,
+		FamilyHistory:      familyHistory,
+		VaccinationHistory: vaccinationHistory,
+		UpdatedBy:          platform.PgUUIDPtr(&updatedBy),
+	})
+	if err != nil {
+		return PatientMedicalHistory{}, fmt.Errorf("upsert patient medical history: %w", err)
+	}
+	return medicalHistoryFromRow(row), nil
+}
+
+func (r *Repository) FindPatientMedicalHistoryByPatientID(ctx context.Context, patientID uuid.UUID) (PatientMedicalHistory, error) {
+	row, err := r.q.FindPatientMedicalHistoryByPatientID(ctx, platform.PgUUID(patientID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PatientMedicalHistory{}, ErrMedicalHistoryNotFound
+	}
+	if err != nil {
+		return PatientMedicalHistory{}, fmt.Errorf("query patient medical history: %w", err)
+	}
+	return medicalHistoryFromRow(row), nil
+}
+
+func medicalHistoryFromRow(row sqlcgen.PatientMedicalHistory) PatientMedicalHistory {
+	return PatientMedicalHistory{
+		PatientID:          platform.FromPgUUID(row.PatientID),
+		Allergies:          row.Allergies,
+		ChronicConditions:  row.ChronicConditions,
+		CurrentMedications: row.CurrentMedications,
+		PastSurgeries:      row.PastSurgeries,
+		FamilyHistory:      row.FamilyHistory,
+		VaccinationHistory: row.VaccinationHistory,
+		UpdatedBy:          platform.FromPgUUIDPtr(row.UpdatedBy),
+		CreatedAt:          row.CreatedAt.Time,
+		UpdatedAt:          row.UpdatedAt.Time,
 	}
 }
 

@@ -17,5 +17,78 @@ RETURNING *;
 -- name: FindProviderByUserID :one
 SELECT * FROM providers WHERE user_id = $1;
 
+-- name: FindProviderByID :one
+SELECT * FROM providers WHERE id = $1;
+
+-- name: UpdateProviderProfile :one
+-- Self-editable provider profile fields. Deliberately excludes
+-- verification_status (admin-only, see UpdateProviderVerificationStatus)
+-- and specialty/license_number (set at creation, not editable via this
+-- profile-update surface).
+UPDATE providers
+SET qualifications = $2,
+    years_experience = $3,
+    consultation_fee = $4,
+    languages = $5,
+    certificates = $6,
+    areas_of_expertise = $7,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateProviderVerificationStatus :one
+-- Admin-only field, kept as its own query so the self-edit path
+-- (UpdateProviderProfile) can never touch it.
+UPDATE providers
+SET verification_status = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: CountFacilities :one
 SELECT count(*) FROM facilities;
+
+-- name: UpdateFacilityLogoAndHours :one
+UPDATE facilities
+SET logo_url = $2, working_hours = $3, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: CreateBranch :one
+INSERT INTO branches (facility_id, name, address, phone)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: ListBranchesByFacility :many
+SELECT * FROM branches WHERE facility_id = $1 ORDER BY name;
+
+-- name: FindBranchByID :one
+SELECT * FROM branches WHERE id = $1;
+
+-- name: UpdateBranch :one
+UPDATE branches
+SET name = $2, address = $3, phone = $4, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: DeleteBranch :exec
+DELETE FROM branches WHERE id = $1;
+
+-- name: CreateDepartment :one
+INSERT INTO departments (facility_id, name)
+VALUES ($1, $2)
+RETURNING *;
+
+-- name: ListDepartmentsByFacility :many
+SELECT * FROM departments WHERE facility_id = $1 ORDER BY name;
+
+-- name: FindDepartmentByID :one
+SELECT * FROM departments WHERE id = $1;
+
+-- name: UpdateDepartment :one
+UPDATE departments
+SET name = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: DeleteDepartment :exec
+DELETE FROM departments WHERE id = $1;

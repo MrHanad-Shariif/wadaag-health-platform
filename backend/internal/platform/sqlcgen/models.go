@@ -504,6 +504,16 @@ type AuditLog struct {
 	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type Branch struct {
+	ID         pgtype.UUID        `json:"id"`
+	FacilityID pgtype.UUID        `json:"facility_id"`
+	Name       string             `json:"name"`
+	Address    pgtype.Text        `json:"address"`
+	Phone      pgtype.Text        `json:"phone"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ClinicalObservation struct {
 	ID          pgtype.UUID        `json:"id"`
 	EncounterID pgtype.UUID        `json:"encounter_id"`
@@ -527,6 +537,23 @@ type ConsentGrant struct {
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 }
 
+type Department struct {
+	ID         pgtype.UUID        `json:"id"`
+	FacilityID pgtype.UUID        `json:"facility_id"`
+	Name       string             `json:"name"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EmailVerificationToken struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+}
+
 type Encounter struct {
 	ID         pgtype.UUID        `json:"id"`
 	PatientID  pgtype.UUID        `json:"patient_id"`
@@ -541,15 +568,26 @@ type Encounter struct {
 }
 
 type Facility struct {
+	ID           pgtype.UUID        `json:"id"`
+	Name         string             `json:"name"`
+	Type         FacilityType       `json:"type"`
+	Region       pgtype.Text        `json:"region"`
+	District     pgtype.Text        `json:"district"`
+	Phone        pgtype.Text        `json:"phone"`
+	Address      pgtype.Text        `json:"address"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	LogoUrl      pgtype.Text        `json:"logo_url"`
+	WorkingHours []byte             `json:"working_hours"`
+}
+
+type PasswordResetToken struct {
 	ID        pgtype.UUID        `json:"id"`
-	Name      string             `json:"name"`
-	Type      FacilityType       `json:"type"`
-	Region    pgtype.Text        `json:"region"`
-	District  pgtype.Text        `json:"district"`
-	Phone     pgtype.Text        `json:"phone"`
-	Address   pgtype.Text        `json:"address"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
 }
 
 type Patient struct {
@@ -565,6 +603,22 @@ type Patient struct {
 	Version     int32              `json:"version"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Gender      pgtype.Text        `json:"gender"`
+	BloodGroup  pgtype.Text        `json:"blood_group"`
+}
+
+type PatientMedicalHistory struct {
+	ID                 pgtype.UUID        `json:"id"`
+	PatientID          pgtype.UUID        `json:"patient_id"`
+	Allergies          []byte             `json:"allergies"`
+	ChronicConditions  []byte             `json:"chronic_conditions"`
+	CurrentMedications []byte             `json:"current_medications"`
+	PastSurgeries      []byte             `json:"past_surgeries"`
+	FamilyHistory      []byte             `json:"family_history"`
+	VaccinationHistory []byte             `json:"vaccination_history"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Permission struct {
@@ -574,13 +628,20 @@ type Permission struct {
 }
 
 type Provider struct {
-	ID            pgtype.UUID        `json:"id"`
-	UserID        pgtype.UUID        `json:"user_id"`
-	FacilityID    pgtype.UUID        `json:"facility_id"`
-	Specialty     pgtype.Text        `json:"specialty"`
-	LicenseNumber pgtype.Text        `json:"license_number"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	FacilityID         pgtype.UUID        `json:"facility_id"`
+	Specialty          pgtype.Text        `json:"specialty"`
+	LicenseNumber      pgtype.Text        `json:"license_number"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	Qualifications     []string           `json:"qualifications"`
+	YearsExperience    pgtype.Int4        `json:"years_experience"`
+	ConsultationFee    pgtype.Numeric     `json:"consultation_fee"`
+	VerificationStatus string             `json:"verification_status"`
+	Languages          []string           `json:"languages"`
+	Certificates       []byte             `json:"certificates"`
+	AreasOfExpertise   []string           `json:"areas_of_expertise"`
 }
 
 type Referral struct {
@@ -610,6 +671,18 @@ type ReferralStatusEvent struct {
 	OccurredAt  pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type RefreshToken struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	TokenHash   string             `json:"token_hash"`
+	DeviceLabel pgtype.Text        `json:"device_label"`
+	Ip          pgtype.Text        `json:"ip"`
+	UserAgent   pgtype.Text        `json:"user_agent"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type Role struct {
 	ID          pgtype.UUID        `json:"id"`
 	Name        string             `json:"name"`
@@ -634,4 +707,17 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	RoleID       pgtype.UUID        `json:"role_id"`
+	VerifiedAt   pgtype.Timestamptz `json:"verified_at"`
+}
+
+type UserProfile struct {
+	UserID             pgtype.UUID        `json:"user_id"`
+	PhotoUrl           pgtype.Text        `json:"photo_url"`
+	Bio                pgtype.Text        `json:"bio"`
+	Languages          []string           `json:"languages"`
+	AvailabilityStatus pgtype.Text        `json:"availability_status"`
+	IsOnline           bool               `json:"is_online"`
+	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }

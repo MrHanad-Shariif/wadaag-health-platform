@@ -1,5 +1,6 @@
 import { useState, type ComponentType } from 'react'
 import {
+  Building2,
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
@@ -31,6 +32,7 @@ export function Layout() {
   const { user } = useAuth()
   const isProvider = user?.role === 'physician' || user?.role === 'hospital_admin'
   const isSystemAdmin = user?.role === 'system_admin'
+  const canManageFacilities = isSystemAdmin || user?.role === 'hospital_admin'
   const canSeeAuthentication = hasPermission(user, 'users', 'read') || hasPermission(user, 'roles', 'read')
 
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar_collapsed') === 'true')
@@ -56,11 +58,23 @@ export function Layout() {
     })
   }
   if (isSystemAdmin) {
-    groups.push({ label: 'Records', items: [{ to: '/patients', label: 'Patients', icon: Users }] })
+    groups.push({
+      label: 'Records',
+      items: [
+        { to: '/patients', label: 'Patients', icon: Users },
+        { to: '/patients/new', label: 'New patient', icon: UserPlus },
+      ],
+    })
+  }
+  if (canManageFacilities) {
+    groups.push({
+      label: 'Facilities',
+      items: [{ to: '/facilities', label: 'Facilities', icon: Building2 }],
+    })
   }
   if (canSeeAuthentication) {
     groups.push({
-      label: 'Administration',
+      label: 'AUTHENTICATION',
       items: [
         { to: '/authentication/users', label: 'Users', icon: UserCog },
         { to: '/authentication/roles', label: 'Roles', icon: ShieldCheck },

@@ -48,6 +48,8 @@ func run() error {
 	defer db.Close()
 
 	tokenManager := platform.NewTokenManager(cfg)
+	rateLimiter := platform.NewDefaultRateLimiter()
+	loginLockout := platform.NewDefaultLoginLockout()
 
 	// Wiring order follows dependency direction: facilities and audit have
 	// no dependencies on other domain modules; consent depends on audit;
@@ -71,8 +73,8 @@ func run() error {
 	consentChecker := consent.NewChecker(consentRepo)
 
 	identityRepo := identity.NewRepository(db)
-	identityService := identity.NewService(identityRepo, tokenManager, facilitiesService)
-	identityHandler := identity.NewHandler(identityService, tokenManager)
+	identityService := identity.NewService(identityRepo, tokenManager, facilitiesService, cfg.UploadDir)
+	identityHandler := identity.NewHandler(identityService, tokenManager, loginLockout)
 
 	authzRepo := authz.NewRepository(db)
 	authzService := authz.NewService(authzRepo, identityService, facilitiesService)
@@ -94,14 +96,16 @@ func run() error {
 	dashboardHandler := dashboard.NewHandler(dashboardService, tokenManager)
 
 	router := server.NewRouter(server.Modules{
-		Identity:   identityHandler,
-		Facilities: facilitiesHandler,
-		Records:    recordsHandler,
-		Referrals:  referralsHandler,
-		Consent:    consentHandler,
-		Audit:      auditHandler,
-		Authz:      authzHandler,
-		Dashboard:  dashboardHandler,
+		Identity:    identityHandler,
+		Facilities:  facilitiesHandler,
+		Records:     recordsHandler,
+		Referrals:   referralsHandler,
+		Consent:     consentHandler,
+		Audit:       auditHandler,
+		Authz:       authzHandler,
+		Dashboard:   dashboardHandler,
+		RateLimiter: rateLimiter,
+		UploadDir:   cfg.UploadDir,
 	})
 
 	httpServer := &http.Server{

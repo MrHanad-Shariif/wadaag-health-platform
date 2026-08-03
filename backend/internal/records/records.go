@@ -16,9 +16,29 @@ type Patient struct {
 	Phone       *string
 	Address     *string
 	NextOfKin   *string
+	Gender      *string
+	BloodGroup  *string
 	Version     int32
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// PatientMedicalHistory is one row per patient (created lazily on first
+// write — see Service.GetMedicalHistory/UpdateMedicalHistory). Each of the
+// six fields is a raw JSON array passed through as-is, same pattern as
+// ClinicalObservation.Payload — no application-level schema is enforced on
+// their contents.
+type PatientMedicalHistory struct {
+	PatientID          uuid.UUID
+	Allergies          []byte
+	ChronicConditions  []byte
+	CurrentMedications []byte
+	PastSurgeries      []byte
+	FamilyHistory      []byte
+	VaccinationHistory []byte
+	UpdatedBy          *uuid.UUID
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type EncounterType string

@@ -2,6 +2,7 @@
 backend/tmp/
 backend/.env
 backend/*.exe
+backend/uploads/
 
 # Env files
 .env

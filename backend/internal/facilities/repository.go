@@ -15,6 +15,8 @@ import (
 var ErrFacilityNotFound = errors.New("facility not found")
 var ErrProviderNotFound = errors.New("provider not found")
 var ErrDuplicateProvider = errors.New("user is already a provider")
+var ErrBranchNotFound = errors.New("branch not found")
+var ErrDepartmentNotFound = errors.New("department not found")
 
 type Repository struct {
 	q *sqlcgen.Queries
@@ -73,6 +75,28 @@ func (r *Repository) FindFacilityByID(ctx context.Context, id uuid.UUID) (Facili
 	return facilityFromRow(row), nil
 }
 
+// UpdateFacilityLogoAndHours overwrites logo_url and working_hours with
+// exactly the values given. It does not itself implement partial-update
+// (merge) semantics — see Service.UpdateFacility, which reads the current
+// facility, overlays only the fields the caller supplied, and passes the
+// fully-resolved result here, following the same read-then-merge-then-write
+// pattern as identity.Service.UpdateProfile / mergeProfileUpdate.
+func (r *Repository) UpdateFacilityLogoAndHours(ctx context.Context, id uuid.UUID, logoURL *string, workingHours []byte) (Facility, error) {
+	row, err := r.q.UpdateFacilityLogoAndHours(ctx, sqlcgen.UpdateFacilityLogoAndHoursParams{
+		ID:           platform.PgUUID(id),
+		LogoUrl:      platform.PgText(logoURL),
+		WorkingHours: workingHours,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Facility{}, ErrFacilityNotFound
+	}
+	if err != nil {
+		return Facility{}, fmt.Errorf("update facility logo/hours: %w", err)
+	}
+
+	return facilityFromRow(row), nil
+}
+
 func (r *Repository) CreateProvider(ctx context.Context, userID, facilityID uuid.UUID, specialty, licenseNumber *string) (Provider, error) {
 	row, err := r.q.CreateProvider(ctx, sqlcgen.CreateProviderParams{
 		UserID:        platform.PgUUID(userID),
@@ -102,28 +126,236 @@ func (r *Repository) FindProviderByUserID(ctx context.Context, userID uuid.UUID)
 	return providerFromRow(row), nil
 }
 
+func (r *Repository) FindProviderByID(ctx context.Context, id uuid.UUID) (Provider, error) {
+	row, err := r.q.FindProviderByID(ctx, platform.PgUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Provider{}, ErrProviderNotFound
+	}
+	if err != nil {
+		return Provider{}, fmt.Errorf("query provider: %w", err)
+	}
+
+	return providerFromRow(row), nil
+}
+
+// UpdateProviderProfile overwrites the self-editable provider profile
+// fields with exactly the values given. Like
+// UpdateFacilityLogoAndHours, it does not itself implement partial-update
+// (merge) semantics — see Service.UpdateOwnProviderProfile, which reads the
+// current provider, overlays only the fields the caller supplied, and
+// passes the fully-resolved result here.
+func (r *Repository) UpdateProviderProfile(ctx context.Context, id uuid.UUID, qualifications []string, yearsExperience *int, consultationFee *string, languages []string, certificates []byte, areasOfExpertise []string) (Provider, error) {
+	fee, err := platform.PgNumeric(consultationFee)
+	if err != nil {
+		return Provider{}, fmt.Errorf("invalid consultation fee: %w", err)
+	}
+
+	row, err := r.q.UpdateProviderProfile(ctx, sqlcgen.UpdateProviderProfileParams{
+		ID:               platform.PgUUID(id),
+		Qualifications:   qualifications,
+		YearsExperience:  platform.PgInt4Ptr(yearsExperience),
+		ConsultationFee:  fee,
+		Languages:        languages,
+		Certificates:     certificates,
+		AreasOfExpertise: areasOfExpertise,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Provider{}, ErrProviderNotFound
+	}
+	if err != nil {
+		return Provider{}, fmt.Errorf("update provider profile: %w", err)
+	}
+
+	return providerFromRow(row), nil
+}
+
+// UpdateProviderVerificationStatus is the admin-only counterpart to
+// UpdateProviderProfile — kept as its own repository method (backed by its
+// own sqlc query) so the self-edit path can never touch verification_status.
+func (r *Repository) UpdateProviderVerificationStatus(ctx context.Context, id uuid.UUID, status string) (Provider, error) {
+	row, err := r.q.UpdateProviderVerificationStatus(ctx, sqlcgen.UpdateProviderVerificationStatusParams{
+		ID:                 platform.PgUUID(id),
+		VerificationStatus: status,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Provider{}, ErrProviderNotFound
+	}
+	if err != nil {
+		return Provider{}, fmt.Errorf("update provider verification status: %w", err)
+	}
+
+	return providerFromRow(row), nil
+}
+
+func (r *Repository) CreateBranch(ctx context.Context, facilityID uuid.UUID, name string, address, phone *string) (Branch, error) {
+	row, err := r.q.CreateBranch(ctx, sqlcgen.CreateBranchParams{
+		FacilityID: platform.PgUUID(facilityID),
+		Name:       name,
+		Address:    platform.PgText(address),
+		Phone:      platform.PgText(phone),
+	})
+	if err != nil {
+		return Branch{}, fmt.Errorf("insert branch: %w", err)
+	}
+	return branchFromRow(row), nil
+}
+
+func (r *Repository) ListBranchesByFacility(ctx context.Context, facilityID uuid.UUID) ([]Branch, error) {
+	rows, err := r.q.ListBranchesByFacility(ctx, platform.PgUUID(facilityID))
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+
+	branches := make([]Branch, len(rows))
+	for i, row := range rows {
+		branches[i] = branchFromRow(row)
+	}
+	return branches, nil
+}
+
+func (r *Repository) FindBranchByID(ctx context.Context, id uuid.UUID) (Branch, error) {
+	row, err := r.q.FindBranchByID(ctx, platform.PgUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Branch{}, ErrBranchNotFound
+	}
+	if err != nil {
+		return Branch{}, fmt.Errorf("query branch: %w", err)
+	}
+	return branchFromRow(row), nil
+}
+
+func (r *Repository) UpdateBranch(ctx context.Context, id uuid.UUID, name string, address, phone *string) (Branch, error) {
+	row, err := r.q.UpdateBranch(ctx, sqlcgen.UpdateBranchParams{
+		ID:      platform.PgUUID(id),
+		Name:    name,
+		Address: platform.PgText(address),
+		Phone:   platform.PgText(phone),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Branch{}, ErrBranchNotFound
+	}
+	if err != nil {
+		return Branch{}, fmt.Errorf("update branch: %w", err)
+	}
+	return branchFromRow(row), nil
+}
+
+func (r *Repository) DeleteBranch(ctx context.Context, id uuid.UUID) error {
+	if err := r.q.DeleteBranch(ctx, platform.PgUUID(id)); err != nil {
+		return fmt.Errorf("delete branch: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) CreateDepartment(ctx context.Context, facilityID uuid.UUID, name string) (Department, error) {
+	row, err := r.q.CreateDepartment(ctx, sqlcgen.CreateDepartmentParams{
+		FacilityID: platform.PgUUID(facilityID),
+		Name:       name,
+	})
+	if err != nil {
+		return Department{}, fmt.Errorf("insert department: %w", err)
+	}
+	return departmentFromRow(row), nil
+}
+
+func (r *Repository) ListDepartmentsByFacility(ctx context.Context, facilityID uuid.UUID) ([]Department, error) {
+	rows, err := r.q.ListDepartmentsByFacility(ctx, platform.PgUUID(facilityID))
+	if err != nil {
+		return nil, fmt.Errorf("list departments: %w", err)
+	}
+
+	departments := make([]Department, len(rows))
+	for i, row := range rows {
+		departments[i] = departmentFromRow(row)
+	}
+	return departments, nil
+}
+
+func (r *Repository) FindDepartmentByID(ctx context.Context, id uuid.UUID) (Department, error) {
+	row, err := r.q.FindDepartmentByID(ctx, platform.PgUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Department{}, ErrDepartmentNotFound
+	}
+	if err != nil {
+		return Department{}, fmt.Errorf("query department: %w", err)
+	}
+	return departmentFromRow(row), nil
+}
+
+func (r *Repository) UpdateDepartment(ctx context.Context, id uuid.UUID, name string) (Department, error) {
+	row, err := r.q.UpdateDepartment(ctx, sqlcgen.UpdateDepartmentParams{
+		ID:   platform.PgUUID(id),
+		Name: name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Department{}, ErrDepartmentNotFound
+	}
+	if err != nil {
+		return Department{}, fmt.Errorf("update department: %w", err)
+	}
+	return departmentFromRow(row), nil
+}
+
+func (r *Repository) DeleteDepartment(ctx context.Context, id uuid.UUID) error {
+	if err := r.q.DeleteDepartment(ctx, platform.PgUUID(id)); err != nil {
+		return fmt.Errorf("delete department: %w", err)
+	}
+	return nil
+}
+
 func facilityFromRow(row sqlcgen.Facility) Facility {
 	return Facility{
-		ID:        platform.FromPgUUID(row.ID),
-		Name:      row.Name,
-		Type:      Type(row.Type),
-		Region:    platform.FromPgText(row.Region),
-		District:  platform.FromPgText(row.District),
-		Phone:     platform.FromPgText(row.Phone),
-		Address:   platform.FromPgText(row.Address),
-		CreatedAt: row.CreatedAt.Time,
-		UpdatedAt: row.UpdatedAt.Time,
+		ID:           platform.FromPgUUID(row.ID),
+		Name:         row.Name,
+		Type:         Type(row.Type),
+		Region:       platform.FromPgText(row.Region),
+		District:     platform.FromPgText(row.District),
+		Phone:        platform.FromPgText(row.Phone),
+		Address:      platform.FromPgText(row.Address),
+		CreatedAt:    row.CreatedAt.Time,
+		UpdatedAt:    row.UpdatedAt.Time,
+		LogoURL:      platform.FromPgText(row.LogoUrl),
+		WorkingHours: row.WorkingHours,
+	}
+}
+
+func branchFromRow(row sqlcgen.Branch) Branch {
+	return Branch{
+		ID:         platform.FromPgUUID(row.ID),
+		FacilityID: platform.FromPgUUID(row.FacilityID),
+		Name:       row.Name,
+		Address:    platform.FromPgText(row.Address),
+		Phone:      platform.FromPgText(row.Phone),
+		CreatedAt:  row.CreatedAt.Time,
+		UpdatedAt:  row.UpdatedAt.Time,
+	}
+}
+
+func departmentFromRow(row sqlcgen.Department) Department {
+	return Department{
+		ID:         platform.FromPgUUID(row.ID),
+		FacilityID: platform.FromPgUUID(row.FacilityID),
+		Name:       row.Name,
+		CreatedAt:  row.CreatedAt.Time,
+		UpdatedAt:  row.UpdatedAt.Time,
 	}
 }
 
 func providerFromRow(row sqlcgen.Provider) Provider {
 	return Provider{
-		ID:            platform.FromPgUUID(row.ID),
-		UserID:        platform.FromPgUUID(row.UserID),
-		FacilityID:    platform.FromPgUUID(row.FacilityID),
-		Specialty:     platform.FromPgText(row.Specialty),
-		LicenseNumber: platform.FromPgText(row.LicenseNumber),
-		CreatedAt:     row.CreatedAt.Time,
-		UpdatedAt:     row.UpdatedAt.Time,
+		ID:                 platform.FromPgUUID(row.ID),
+		UserID:             platform.FromPgUUID(row.UserID),
+		FacilityID:         platform.FromPgUUID(row.FacilityID),
+		Specialty:          platform.FromPgText(row.Specialty),
+		LicenseNumber:      platform.FromPgText(row.LicenseNumber),
+		CreatedAt:          row.CreatedAt.Time,
+		UpdatedAt:          row.UpdatedAt.Time,
+		Qualifications:     row.Qualifications,
+		YearsExperience:    platform.FromPgInt4Ptr(row.YearsExperience),
+		ConsultationFee:    platform.FromPgNumeric(row.ConsultationFee),
+		VerificationStatus: row.VerificationStatus,
+		Languages:          row.Languages,
+		Certificates:       row.Certificates,
+		AreasOfExpertise:   row.AreasOfExpertise,
 	}
 }

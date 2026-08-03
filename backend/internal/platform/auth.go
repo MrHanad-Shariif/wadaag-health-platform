@@ -83,8 +83,11 @@ func (m *TokenManager) IssueAccessToken(c TokenClaims) (string, error) {
 	return m.issue(c, m.accessTokenTTL)
 }
 
-func (m *TokenManager) IssueRefreshToken(c TokenClaims) (string, error) {
-	return m.issue(c, m.refreshTokenTTL)
+// RefreshTokenTTL exposes the configured refresh-token lifetime so callers
+// that store their own opaque refresh tokens (see identity.Service) can
+// compute an expires_at consistent with the JWT-based TTL used elsewhere.
+func (m *TokenManager) RefreshTokenTTL() time.Duration {
+	return m.refreshTokenTTL
 }
 
 func (m *TokenManager) issue(c TokenClaims, ttl time.Duration) (string, error) {
@@ -153,6 +156,9 @@ func RequireAuth(tm *TokenManager) func(http.Handler) http.Handler {
 
 // RequireRoles gates a route to a fixed set of legacy roles. It must run
 // after RequireAuth so Claims are already present in the context.
+// RoleSystemAdmin unconditionally bypasses the check — the administrator
+// is meant to have full access across every module, not just the ones
+// that happen to list system_admin explicitly.
 func RequireRoles(roles ...Role) func(http.Handler) http.Handler {
 	allowed := make(map[Role]bool, len(roles))
 	for _, r := range roles {
@@ -167,7 +173,7 @@ func RequireRoles(roles ...Role) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !allowed[claims.Role] {
+			if claims.Role != RoleSystemAdmin && !allowed[claims.Role] {
 				WriteError(w, http.StatusForbidden, "role not permitted for this route")
 				return
 			}

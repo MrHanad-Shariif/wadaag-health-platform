@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { Moon, Sun } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { BrandMark } from '../../shared/BrandMark'
 import { useTheme } from '../../shared/useTheme'
 import { useAuth } from './useAuth'
 
-export function LoginPage() {
+export function LoginPage({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {
   const { login } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const [identifier, setIdentifier] = useState('')
@@ -72,6 +73,10 @@ export function LoginPage() {
             required
           />
 
+          <Link to="/forgot-password" className="button button--link" style={{ alignSelf: 'flex-end' }}>
+            Forgot password?
+          </Link>
+
           {error && (
             <p role="alert" className="auth-error">
               {error}
@@ -80,6 +85,10 @@ export function LoginPage() {
 
           <button type="submit" className="button button--primary" disabled={submitting}>
             {submitting ? 'Signing in…' : 'Sign in'}
+          </button>
+
+          <button type="button" className="button button--link" onClick={onSwitchToSignup}>
+            New patient? Create an account
           </button>
         </form>
       </section>

@@ -17,32 +17,53 @@ type Querier interface {
 	CountPatients(ctx context.Context) (int64, error)
 	CountReferralsByStatus(ctx context.Context) ([]CountReferralsByStatusRow, error)
 	CountUsers(ctx context.Context) (int64, error)
+	CreateBranch(ctx context.Context, arg CreateBranchParams) (Branch, error)
 	CreateClinicalObservation(ctx context.Context, arg CreateClinicalObservationParams) (ClinicalObservation, error)
 	CreateConsentGrant(ctx context.Context, arg CreateConsentGrantParams) (ConsentGrant, error)
+	CreateDepartment(ctx context.Context, arg CreateDepartmentParams) (Department, error)
+	CreateEmailVerificationToken(ctx context.Context, arg CreateEmailVerificationTokenParams) (EmailVerificationToken, error)
 	CreateEncounter(ctx context.Context, arg CreateEncounterParams) (Encounter, error)
 	CreateFacility(ctx context.Context, arg CreateFacilityParams) (Facility, error)
+	CreatePasswordResetToken(ctx context.Context, arg CreatePasswordResetTokenParams) (PasswordResetToken, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) (Patient, error)
 	CreateProvider(ctx context.Context, arg CreateProviderParams) (Provider, error)
 	CreateReferral(ctx context.Context, arg CreateReferralParams) (Referral, error)
 	CreateReferralStatusEvent(ctx context.Context, arg CreateReferralStatusEventParams) (ReferralStatusEvent, error)
+	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteBranch(ctx context.Context, id pgtype.UUID) error
+	DeleteDepartment(ctx context.Context, id pgtype.UUID) error
 	DeleteRole(ctx context.Context, id pgtype.UUID) error
 	FindActiveGrants(ctx context.Context, arg FindActiveGrantsParams) ([]ConsentGrant, error)
+	FindBranchByID(ctx context.Context, id pgtype.UUID) (Branch, error)
+	FindDepartmentByID(ctx context.Context, id pgtype.UUID) (Department, error)
+	FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (EmailVerificationToken, error)
 	FindEncounterByID(ctx context.Context, id pgtype.UUID) (Encounter, error)
 	FindFacilityByID(ctx context.Context, id pgtype.UUID) (Facility, error)
+	FindPasswordResetTokenByHash(ctx context.Context, tokenHash string) (PasswordResetToken, error)
 	FindPatientByID(ctx context.Context, id pgtype.UUID) (Patient, error)
+	// Returns pgx.ErrNoRows if no row exists yet — expected (a patient with no
+	// medical history recorded), handled in the repository layer, not an error
+	// condition.
+	FindPatientMedicalHistoryByPatientID(ctx context.Context, patientID pgtype.UUID) (PatientMedicalHistory, error)
+	FindProviderByID(ctx context.Context, id pgtype.UUID) (Provider, error)
 	FindProviderByUserID(ctx context.Context, userID pgtype.UUID) (Provider, error)
 	FindReferralByID(ctx context.Context, id pgtype.UUID) (Referral, error)
+	FindRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	FindRoleByID(ctx context.Context, id pgtype.UUID) (Role, error)
 	FindUserByEmailOrPhone(ctx context.Context, email pgtype.Text) (User, error)
 	FindUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	FindUserWithRoleByID(ctx context.Context, id pgtype.UUID) (FindUserWithRoleByIDRow, error)
 	GetUserAccess(ctx context.Context, id pgtype.UUID) (GetUserAccessRow, error)
+	GetUserProfile(ctx context.Context, userID pgtype.UUID) (UserProfile, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	InsertRolePermissions(ctx context.Context, arg InsertRolePermissionsParams) error
+	ListActiveRefreshTokensForUser(ctx context.Context, userID pgtype.UUID) ([]RefreshToken, error)
 	ListAuditLogForPatient(ctx context.Context, patientID pgtype.UUID) ([]AuditLog, error)
+	ListBranchesByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Branch, error)
 	ListConsentGrantsForPatient(ctx context.Context, patientID pgtype.UUID) ([]ConsentGrant, error)
+	ListDepartmentsByFacility(ctx context.Context, facilityID pgtype.UUID) ([]Department, error)
 	ListEncountersByPatient(ctx context.Context, patientID pgtype.UUID) ([]Encounter, error)
 	ListFacilities(ctx context.Context) ([]Facility, error)
 	ListObservationsByEncounter(ctx context.Context, encounterID pgtype.UUID) ([]ClinicalObservation, error)
@@ -54,12 +75,41 @@ type Querier interface {
 	ListReferralsForFacility(ctx context.Context, receivingFacilityID pgtype.UUID) ([]Referral, error)
 	ListRoles(ctx context.Context) ([]Role, error)
 	ListUsersWithRole(ctx context.Context) ([]ListUsersWithRoleRow, error)
+	MarkEmailVerificationTokenUsed(ctx context.Context, id pgtype.UUID) error
+	MarkPasswordResetTokenUsed(ctx context.Context, id pgtype.UUID) error
+	MarkUserVerified(ctx context.Context, id pgtype.UUID) error
 	ReplaceRolePermissions(ctx context.Context, roleID pgtype.UUID) error
+	RevokeAllRefreshTokensForUser(ctx context.Context, userID pgtype.UUID) error
 	RevokeConsentGrant(ctx context.Context, arg RevokeConsentGrantParams) (ConsentGrant, error)
+	RevokeRefreshToken(ctx context.Context, id pgtype.UUID) error
+	RevokeRefreshTokenForUser(ctx context.Context, arg RevokeRefreshTokenForUserParams) (int64, error)
+	SetUserProfilePresence(ctx context.Context, arg SetUserProfilePresenceParams) error
+	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
+	UpdateDepartment(ctx context.Context, arg UpdateDepartmentParams) (Department, error)
+	UpdateFacilityLogoAndHours(ctx context.Context, arg UpdateFacilityLogoAndHoursParams) (Facility, error)
+	UpdatePatientGenderBloodGroup(ctx context.Context, arg UpdatePatientGenderBloodGroupParams) (Patient, error)
+	// Self-editable provider profile fields. Deliberately excludes
+	// verification_status (admin-only, see UpdateProviderVerificationStatus)
+	// and specialty/license_number (set at creation, not editable via this
+	// profile-update surface).
+	UpdateProviderProfile(ctx context.Context, arg UpdateProviderProfileParams) (Provider, error)
+	// Admin-only field, kept as its own query so the self-edit path
+	// (UpdateProviderProfile) can never touch it.
+	UpdateProviderVerificationStatus(ctx context.Context, arg UpdateProviderVerificationStatusParams) (Provider, error)
 	UpdateReferralStatus(ctx context.Context, arg UpdateReferralStatusParams) (Referral, error)
 	UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, error)
+	UpdateUserPasswordHash(ctx context.Context, arg UpdateUserPasswordHashParams) error
 	UpdateUserRoleID(ctx context.Context, arg UpdateUserRoleIDParams) (User, error)
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (User, error)
+	// Always a full replacement of all six jsonb columns (plus updated_by) —
+	// no partial-update merge here, unlike UpsertUserProfile. See
+	// Service.UpdateMedicalHistory.
+	UpsertPatientMedicalHistory(ctx context.Context, arg UpsertPatientMedicalHistoryParams) (PatientMedicalHistory, error)
+	// Partial update semantics live in the repository (Go), not here: the
+	// repository always re-reads-then-writes the merged bio/languages/
+	// availability_status, so this query itself is a plain full upsert.
+	UpsertUserProfile(ctx context.Context, arg UpsertUserProfileParams) (UserProfile, error)
+	UpsertUserProfilePhoto(ctx context.Context, arg UpsertUserProfilePhotoParams) (UserProfile, error)
 }
 
 var _ Querier = (*Queries)(nil)

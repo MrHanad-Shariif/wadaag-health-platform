@@ -69,6 +69,61 @@ func FromPgTimestamptzPtr(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
+// PgNumeric converts a decimal string (e.g. "125.50", as would come off a
+// JSON request body for a NUMERIC column such as providers.consultation_fee)
+// to its pgx wire form. A nil or empty string yields NULL. Returns an error
+// if s isn't valid decimal text — callers should treat that as a client
+// input error (400), not a server error.
+func PgNumeric(s *string) (pgtype.Numeric, error) {
+	if s == nil || *s == "" {
+		return pgtype.Numeric{}, nil
+	}
+	var n pgtype.Numeric
+	if err := n.Scan(*s); err != nil {
+		return pgtype.Numeric{}, err
+	}
+	return n, nil
+}
+
+// FromPgNumeric renders a NUMERIC column back to decimal string form (e.g.
+// "125.50"), or nil if the column is NULL. There's no existing decimal type
+// in this codebase, and pgtype.Numeric has no plain String() method, so this
+// goes through its database/sql/driver.Valuer implementation (which encodes
+// to text) rather than hand-rolling big.Int/exponent formatting.
+func FromPgNumeric(n pgtype.Numeric) *string {
+	if !n.Valid {
+		return nil
+	}
+	v, err := n.Value()
+	if err != nil || v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil
+	}
+	return &s
+}
+
+// PgInt4Ptr converts a nullable int (e.g. providers.years_experience) to its
+// pgx wire form. A nil pointer yields NULL.
+func PgInt4Ptr(i *int) pgtype.Int4 {
+	if i == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*i), Valid: true}
+}
+
+// FromPgInt4Ptr renders a nullable INT4 column back to *int, or nil if the
+// column is NULL.
+func FromPgInt4Ptr(i pgtype.Int4) *int {
+	if !i.Valid {
+		return nil
+	}
+	v := int(i.Int32)
+	return &v
+}
+
 func PgDatePtr(t *time.Time) pgtype.Date {
 	if t == nil {
 		return pgtype.Date{}

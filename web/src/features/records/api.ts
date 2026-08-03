@@ -5,7 +5,10 @@ import type {
   CreateObservationInput,
   CreatePatientInput,
   Encounter,
+  MedicalHistory,
   Patient,
+  UpdateMedicalHistoryInput,
+  UpdatePatientDemographicsInput,
 } from './types'
 
 export function createPatient(input: CreatePatientInput) {
@@ -14,6 +17,18 @@ export function createPatient(input: CreatePatientInput) {
 
 export function getPatient(patientId: string) {
   return apiClient.get<Patient>(`/api/v1/records/patients/${patientId}`)
+}
+
+export function updatePatientDemographics(patientId: string, input: UpdatePatientDemographicsInput) {
+  return apiClient.patch<Patient>(`/api/v1/records/patients/${patientId}`, input)
+}
+
+export function getMedicalHistory(patientId: string) {
+  return apiClient.get<MedicalHistory>(`/api/v1/records/patients/${patientId}/medical-history`)
+}
+
+export function updateMedicalHistory(patientId: string, input: UpdateMedicalHistoryInput) {
+  return apiClient.patch<MedicalHistory>(`/api/v1/records/patients/${patientId}/medical-history`, input)
 }
 
 export function listPatients() {

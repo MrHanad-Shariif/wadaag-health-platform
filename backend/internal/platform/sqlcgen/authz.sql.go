@@ -317,7 +317,7 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, e
 
 const updateUserRoleID = `-- name: UpdateUserRoleID :one
 UPDATE users SET role_id = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
 `
 
 type UpdateUserRoleIDParams struct {
@@ -338,13 +338,14 @@ func (q *Queries) UpdateUserRoleID(ctx context.Context, arg UpdateUserRoleIDPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RoleID,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
 
 const updateUserStatus = `-- name: UpdateUserStatus :one
 UPDATE users SET status = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id
+RETURNING id, email, phone, password_hash, role, status, created_at, updated_at, role_id, verified_at
 `
 
 type UpdateUserStatusParams struct {
@@ -365,6 +366,7 @@ func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RoleID,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
